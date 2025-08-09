@@ -218,26 +218,36 @@ fig1 = px.line(cum_df.reset_index(), x="Date", y=["Top","Bottom","SPY"],
                       f"(Formation {formation_start.date()}→{formation_end.date()})"),
                labels={"value":"Portfolio Value ($)", "variable":"Series"})
 fig1.for_each_trace(lambda t: t.update(line=dict(width=3)))
+# Consistent money hover + axis ticks
+fig1.update_traces(hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>')
+fig1.update_yaxes(tickprefix="$", separatethousands=True)
 if cum_df.empty:
     st.warning("No cumulative series to plot (check data coverage).")
 else:
     st.plotly_chart(fig1, use_container_width=True)
 
-# -------------------- LONG–SHORT & SHORT–LONG (clear legend) --------------------
+# -------------------- LONG–SHORT & SHORT–LONG (clear legend + money hover) --------------------
 ls = g_top - g_bot
 sl = g_bot - g_top
 ls_w = (1 + ls.fillna(0)).cumprod(); ls_w = ls_w / ls_w.iloc[0] * INITIAL_INV
 sl_w = (1 + sl.fillna(0)).cumprod(); sl_w = sl_w / sl_w.iloc[0] * INITIAL_INV
 
 fig_ls = go.Figure()
-fig_ls.add_trace(go.Scatter(x=ls_w.index, y=ls_w.values, mode="lines",
-                            name="Long Top / Short Bottom", line=dict(width=3)))
-fig_ls.add_trace(go.Scatter(x=sl_w.index, y=sl_w.values, mode="lines",
-                            name="Long Bottom / Short Top"))
+fig_ls.add_trace(go.Scatter(
+    x=ls_w.index, y=ls_w.values, mode="lines",
+    name="Long Top / Short Bottom", line=dict(width=3),
+    hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'
+))
+fig_ls.add_trace(go.Scatter(
+    x=sl_w.index, y=sl_w.values, mode="lines",
+    name="Long Bottom / Short Top",
+    hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'
+))
 fig_ls.update_layout(
     title=f"Long–Short vs Short–Long ({group_mode})",
     xaxis_title="Date", yaxis_title="Value ($)", template="plotly_white"
 )
+fig_ls.update_yaxes(tickprefix="$", separatethousands=True)
 st.plotly_chart(fig_ls, use_container_width=True)
 
 # -------------------- DECILE BAR (no clipped labels) --------------------

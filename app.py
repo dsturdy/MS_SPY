@@ -1,3 +1,4 @@
+# app.py
 import os
 import numpy as np
 import pandas as pd
@@ -31,7 +32,7 @@ def load_prices_from_folder(tickers: list[str]) -> pd.DataFrame:
     frames = []
     for t in tickers:
         p = os.path.join(PRICES_DIR, f"{t}.csv")
-        if not os.path.exists(p):  # skip missing file
+        if not os.path.exists(p):
             continue
         df = pd.read_csv(p, parse_dates=["Date"])
         col = "AdjClose" if "AdjClose" in df.columns else ("Close" if "Close" in df.columns else None)
@@ -56,8 +57,9 @@ def load_spy_series(start_date: str, end_date: str) -> pd.Series:
     if os.path.exists(local):
         df = pd.read_csv(local, parse_dates=["Date"])
         col = "AdjClose" if "AdjClose" in df.columns else ("Close" if "Close" in df.columns else None)
+        if col is None:
+            raise ValueError("SPY.csv must have 'AdjClose' or 'Close' column.")
         s = df.set_index("Date")[col].rename("SPY")
-        # clip to window (with a little pad for safety)
         return s.loc[pd.to_datetime(start_date) - pd.Timedelta(days=5) :
                      pd.to_datetime(end_date)   + pd.Timedelta(days=5)]
     else:
@@ -119,14 +121,18 @@ st.sidebar.write(f"Formation: **{formation_start.date()} → {formation_end.date
 st.sidebar.write(f"Test: **{TEST_START.date()} → {TEST_END.date()}**")
 
 # -------------------- LOAD DATA --------------------
-tickers = list_available_tickers()
-if not tickers:
+all_files = list_available_tickers()
+if not all_files:
     st.error(f"No CSVs found in `{PRICES_DIR}/`. Commit your per‑ticker files first.")
     st.stop()
 
+# Exclude benchmark (and any extras you may have stashed in the folder)
+EXCLUDE = {"SPY"}
+tickers = [t for t in all_files if t not in EXCLUDE]
+
 prices_all = load_prices_from_folder(tickers)
 if prices_all.empty:
-    st.error("Failed to load any prices from the CSVs.")
+    st.error("Failed to load any prices from the CSVs (after exclusions).")
     st.stop()
 
 # Require full data (no NaNs) in both formation and test windows
@@ -159,15 +165,12 @@ curves = {}
 curves["Top"]    = (1 + g_top.fillna(0)).cumprod()
 curves["Bottom"] = (1 + g_bot.fillna(0)).cumprod()
 
-# Existing curves dict already has "Top" and "Bottom"
+# SPY benchmark (cached by date strings)
 dates_index = curves["Top"].index
-
 spy_raw = load_spy_series(
     dates_index.min().strftime("%Y-%m-%d"),
     dates_index.max().strftime("%Y-%m-%d")
 )
-
-# align SPY to your exact dates AFTER caching
 spy_aligned = spy_raw.reindex(dates_index).ffill()
 spy_rets = spy_aligned.pct_change().fillna(0)
 curves["SPY"] = (1 + spy_rets).cumprod()
@@ -243,8 +246,10 @@ st.plotly_chart(fig3, use_container_width=True)
 
 # -------------------- SUMMARY TABLE --------------------
 def port_stats(series):
+    if series.std() == 0 or np.isnan(series.std()):
+        return np.nan, np.nan, np.nan
     ann_vol = series.std() * np.sqrt(252)
-    sharpe  = (series.mean() / series.std()) * np.sqrt(252) if series.std() > 0 else np.nan
+    sharpe  = (series.mean() / series.std()) * np.sqrt(252)
     return ann_vol, sharpe, max_drawdown(series)
 
 ann_vol_top, sharpe_top, mdd_top = port_stats(g_top.dropna())

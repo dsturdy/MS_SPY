@@ -8,11 +8,30 @@ import plotly.express as px
 import plotly.graph_objects as go
 import yfinance as yf
 
+# -------------------- THEME --------------------
+st.markdown(
+    """
+    <style>
+    /* App background + default text color */
+    .stApp {
+        background-color: #2f2f2f;  /* dark gray */
+        color: black;               /* as requested */
+    }
+    /* Sidebar background */
+    section[data-testid="stSidebar"] {
+        background-color: #3a3a3a;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 # -------------------- CONFIG --------------------
 PRICES_DIR = "Necessary_CSVs"   # per-ticker CSVs with columns: Date, AdjClose (or Close)
 TEST_START = pd.Timestamp("2024-10-01")
 TEST_END   = pd.Timestamp("2025-03-31")
 INITIAL_INV = 10000
+PLOT_BG = "#e6e6e6"   # light gray for charts
 
 st.set_page_config(page_title="SPX Momentum vs Reversal (Q4'24–Q1'25)", layout="wide")
 
@@ -100,10 +119,9 @@ def port_stats(series):
     sharpe  = (series.mean() / std) * np.sqrt(252)
     return ann_vol, sharpe, max_drawdown(series)
 
-# -------------------- SIDEBAR (with Run button) --------------------
+# -------------------- SIDEBAR (Run button) --------------------
 with st.sidebar.form("controls"):
     st.header("Parameters")
-
     lookback_choice = st.selectbox(
         "Formation lookback",
         ["1 month", "3 months", "6 months", "12 months"],
@@ -119,21 +137,19 @@ with st.sidebar.form("controls"):
          "Half (Top 50% vs Bottom 50%)"],
         index=0
     )
-
     run = st.form_submit_button("Run")
 
 if not run:
     st.title("Momentum vs Reversal — S&P 500 (Point‑in‑Time) Q4’24–Q1’25")
-    st.info("Select your lookback and grouping in the sidebar, then click **Run**.")
+    st.info("Select your lookback & grouping in the sidebar, then click **Run**.")
     st.stop()
 
 formation_end   = TEST_START - pd.Timedelta(days=1)
 formation_start = TEST_START - pd.DateOffset(months=LOOKBACK_MONTHS)
-
 st.sidebar.write(f"Formation: **{formation_start.date()} → {formation_end.date()}**")
 st.sidebar.write(f"Test: **{TEST_START.date()} → {TEST_END.date()}**")
 
-# -------------------- LOAD & FILTER DATA (FIXED) --------------------
+# -------------------- LOAD & FILTER DATA (robust) --------------------
 all_files = list_available_tickers()
 if not all_files:
     st.error(f"No CSVs found in `{PRICES_DIR}/`. Commit your per‑ticker files first.")
@@ -180,13 +196,12 @@ st.title("Momentum vs Reversal — S&P 500 (Point‑in‑Time) Q4’24–Q1’25
 st.caption("Data source: per‑ticker CSVs in repo. Formation ranking uses selected lookback; "
            "test window is Oct 1, 2024 → Mar 31, 2025.")
 
-# -------------------- CUMULATIVE (with SPY) --------------------
+# -------------------- CUMULATIVE (Top/Bottom/SPY) --------------------
 twin2 = rets.loc[TEST_START:TEST_END]
 if twin2.empty:
     st.error("No trading days in the selected test window.")
     st.stop()
 
-# Safety: intersect selected groups with actually available columns
 avail = set(twin2.columns)
 top_use = [t for t in list(top) if t in avail]
 bot_use = [t for t in list(bot) if t in avail]
@@ -202,10 +217,8 @@ curves["Top"]    = (1 + g_top.fillna(0)).cumprod()
 curves["Bottom"] = (1 + g_bot.fillna(0)).cumprod()
 
 dates_index = curves["Top"].index
-spy_raw = load_spy_series(
-    dates_index.min().strftime("%Y-%m-%d"),
-    dates_index.max().strftime("%Y-%m-%d")
-)
+spy_raw = load_spy_series(dates_index.min().strftime("%Y-%m-%d"),
+                          dates_index.max().strftime("%Y-%m-%d"))
 spy_aligned = spy_raw.reindex(dates_index).ffill()
 spy_rets = spy_aligned.pct_change().fillna(0)
 curves["SPY"] = (1 + spy_rets).cumprod()
@@ -218,15 +231,12 @@ fig1 = px.line(cum_df.reset_index(), x="Date", y=["Top","Bottom","SPY"],
                       f"(Formation {formation_start.date()}→{formation_end.date()})"),
                labels={"value":"Portfolio Value ($)", "variable":"Series"})
 fig1.for_each_trace(lambda t: t.update(line=dict(width=3)))
-# Consistent money hover + axis ticks
 fig1.update_traces(hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>')
 fig1.update_yaxes(tickprefix="$", separatethousands=True)
-if cum_df.empty:
-    st.warning("No cumulative series to plot (check data coverage).")
-else:
-    st.plotly_chart(fig1, use_container_width=True)
+fig1.update_layout(plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG)
+st.plotly_chart(fig1, use_container_width=True)
 
-# -------------------- LONG–SHORT & SHORT–LONG (clear legend + money hover) --------------------
+# -------------------- LONG–SHORT & SHORT–LONG --------------------
 ls = g_top - g_bot
 sl = g_bot - g_top
 ls_w = (1 + ls.fillna(0)).cumprod(); ls_w = ls_w / ls_w.iloc[0] * INITIAL_INV
@@ -245,12 +255,13 @@ fig_ls.add_trace(go.Scatter(
 ))
 fig_ls.update_layout(
     title=f"Long–Short vs Short–Long ({group_mode})",
-    xaxis_title="Date", yaxis_title="Value ($)", template="plotly_white"
+    xaxis_title="Date", yaxis_title="Value ($)",
+    template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG
 )
 fig_ls.update_yaxes(tickprefix="$", separatethousands=True)
 st.plotly_chart(fig_ls, use_container_width=True)
 
-# -------------------- DECILE BAR (no clipped labels) --------------------
+# -------------------- DECILE BAR (gradient view, no clipped labels) --------------------
 deciles = (np.ceil(ranks * 10)).astype(int).clip(upper=10)
 decile_df = pd.DataFrame({"formation": formation, "test": test, "decile": deciles})
 avg_future = decile_df.groupby("decile", as_index=False)["test"].mean()
@@ -264,7 +275,8 @@ pad = max(0.01, 0.12 * (ymax - ymin))
 fig2.update_yaxes(range=[ymin - pad, ymax + pad])
 fig2.update_traces(text=avg_future["test"].map("{:.2%}".format),
                    textposition="outside", cliponaxis=False)
-fig2.update_layout(margin=dict(t=80, b=60, l=70, r=40))
+fig2.update_layout(margin=dict(t=80, b=60, l=70, r=40),
+                   template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG)
 st.plotly_chart(fig2, use_container_width=True)
 
 # -------------------- SCATTER + REGRESSION + CI (selected groups only) --------------------
@@ -306,17 +318,20 @@ else:
     pred = reg.get_prediction(Xg).summary_frame(alpha=0.05)
 
     fig3 = go.Figure()
+    # CI band
     fig3.add_trace(go.Scatter(
         x=np.hstack([xgrid, xgrid[::-1]]),
         y=np.hstack([pred["mean_ci_lower"], pred["mean_ci_upper"][::-1]]),
         fill='toself', showlegend=False, fillcolor="rgba(0,0,255,0.1)", line=dict(width=0)
     ))
+    # Regression line
     fig3.add_trace(go.Scatter(
         x=xgrid, y=pred["mean"], mode="lines",
         name=f"Fit β={beta:.2f} (t={tval:.2f}, p={pval:.3g})",
         line=dict(color="black", dash="dash"),
         hovertemplate='Formation: %{x:.2%}<br>Ŷ: %{y:.2%}<extra></extra>'
     ))
+    # Two group scatters with nice hover
     for label, color in [(top_name, "royalblue"), (bot_name, "orangered")]:
         d = df_sel[df_sel["group"] == label]
         fig3.add_trace(go.Scatter(
@@ -331,27 +346,32 @@ else:
         ))
     fig3.update_layout(
         title=f"Cross‑Section (Selected Groups Only): {top_name} vs {bot_name} — lookback={LOOKBACK_MONTHS}m",
-        xaxis_title="Formation Return", yaxis_title="Test Return", template="plotly_white"
+        xaxis_title="Formation Return", yaxis_title="Test Return",
+        template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG
     )
     fig3.update_xaxes(tickformat=".2%")
     fig3.update_yaxes(tickformat=".2%")
     st.plotly_chart(fig3, use_container_width=True)
 
 # -------------------- SUMMARY TABLE --------------------
-ann_vol_top, sharpe_top, mdd_top = port_stats(g_top.dropna())
-ann_vol_bot, sharpe_bot, mdd_bot = port_stats(g_bot.dropna())
-ann_vol_ls,  sharpe_ls,  mdd_ls  = port_stats(ls.dropna())
-ann_vol_sl,  sharpe_sl,  mdd_sl  = port_stats(sl.dropna())
+def _stats(s):
+    ann_vol, sharpe, mdd = port_stats(s.dropna())
+    return compute_cum(s), ann_vol, sharpe, mdd
+
+cum_top, av_top, sh_top, dd_top   = _stats(g_top)
+cum_bot, av_bot, sh_bot, dd_bot   = _stats(g_bot)
+cum_ls,  av_ls,  sh_ls,  dd_ls    = _stats(ls)
+cum_sl,  av_sl,  sh_sl,  dd_sl    = _stats(sl)
 
 summary = pd.DataFrame([
-    ["Top",         compute_cum(g_top), ann_vol_top, sharpe_top, mdd_top],
-    ["Bottom",      compute_cum(g_bot), ann_vol_bot, sharpe_bot, mdd_bot],
-    ["Long–Short",  compute_cum(ls),    ann_vol_ls,  sharpe_ls,  mdd_ls ],
-    ["Short–Long",  compute_cum(sl),    ann_vol_sl,  sharpe_sl,  mdd_sl]
+    ["Top",         cum_top, av_top, sh_top, dd_top],
+    ["Bottom",      cum_bot, av_bot, sh_bot, dd_bot],
+    ["Long–Short",  cum_ls,  av_ls,  sh_ls,  dd_ls ],
+    ["Short–Long",  cum_sl,  av_sl,  sh_sl,  dd_sl]
 ], columns=["Portfolio", "Cum Return", "Ann Vol", "Sharpe", "Max DD"]).set_index("Portfolio")
 
 st.subheader("Summary (Test Window)")
 st.dataframe(summary.style.format({
     "Cum Return":"{:.2%}", "Ann Vol":"{:.2%}", "Sharpe":"{:.2f}", "Max DD":"{:.2%}"
 }))
-st.caption("β>0 & significant → momentum; β<0 & significant → reversal; else → inconclusive.")
+st.caption("β>0 & significant (p<0.05) → momentum; β<0 & significant → reversal; else → inconclusive.")

@@ -161,6 +161,11 @@ if prices_all.empty:
 rets = prices_all.pct_change()
 fwin = rets.loc[formation_start:formation_end]
 twin = rets.loc[TEST_START:TEST_END]
+
+if fwin.empty or twin.empty:
+    st.error("No trading days in the selected formation or test window.")
+    st.stop()
+
 keep = fwin.notna().all() & twin.notna().all()
 rets = rets.loc[:, keep.index[keep]]
 
@@ -183,6 +188,10 @@ st.caption("Data source: per‑ticker CSVs in repo. Formation ranking uses selec
 
 # -------------------- CUMULATIVE (with SPY) --------------------
 twin2 = rets.loc[TEST_START:TEST_END]
+if twin2.empty:
+    st.error("No trading days in the selected test window.")
+    st.stop()
+
 g_top = twin2[list(top)].mean(axis=1)
 g_bot = twin2[list(bot)].mean(axis=1)
 
@@ -208,7 +217,10 @@ fig1 = px.line(cum_df.reset_index(), x="Date", y=["Top","Bottom","SPY"],
                       f"(Formation {formation_start.date()}→{formation_end.date()})"),
                labels={"value":"Portfolio Value ($)", "variable":"Series"})
 fig1.for_each_trace(lambda t: t.update(line=dict(width=3)))
-st.plotly_chart(fig1, use_container_width=True)
+if cum_df.empty:
+    st.warning("No cumulative series to plot (check data coverage).")
+else:
+    st.plotly_chart(fig1, use_container_width=True)
 
 # -------------------- LONG–SHORT & SHORT–LONG --------------------
 ls = g_top - g_bot

@@ -373,10 +373,10 @@ summary = pd.DataFrame([
     ["Bottom",      cum_bot, av_bot, sh_bot, dd_bot],
     ["Long–Short",  cum_ls,  av_ls,  sh_ls,  dd_ls ],
     ["Short–Long",  cum_sl,  av_sl,  sh_sl,  dd_sl]
-], columns=["Portfolio", "Cumulative Return", "Annualized Vol", "Sharpe", "Max Draw Down"]).set_index("Portfolio")
+], columns=["Portfolio", "Cumulative Return", "Annualized Vol", "Sharpe", "Max Drawdown"]).set_index("Portfolio")
 
 st.subheader("Summary (Test Window)")
 st.dataframe(summary.style.format({
-    "Cum Return":"{:.2%}", "Ann Vol":"{:.2%}", "Sharpe":"{:.2f}", "Max DD":"{:.2%}"
+    "Cumulative Return":"{:.2%}", "Annualized Vol":"{:.2%}", "Sharpe":"{:.2f}", "Max Drawdown":"{:.2%}"
 }))
 st.caption("β>0 & significant (p<0.05) → momentum; β<0 & significant → reversal; else → inconclusive.")

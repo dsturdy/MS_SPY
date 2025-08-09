@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 import yfinance as yf
 
 # -------------------- CONFIG --------------------
-PRICES_DIR = "Necessary_CSVs"   # folder containing per-ticker CSVs (Date, AdjClose or Close)
+PRICES_DIR = "Necessary_CSVs"   # per-ticker CSVs with columns: Date, AdjClose (or Close)
 TEST_START = pd.Timestamp("2024-10-01")
 TEST_END   = pd.Timestamp("2025-03-31")
 INITIAL_INV = 10000
@@ -24,11 +24,8 @@ def list_available_tickers():
     return sorted({os.path.splitext(f)[0] for f in files})
 
 @st.cache_data(show_spinner=False)
-def load_prices_from_folder(tickers: list[str]) -> pd.DataFrame:
-    """
-    Load per-ticker CSVs (Date, AdjClose/Close) into a wide DataFrame.
-    Index: Date; Columns: tickers.
-    """
+def load_prices_from_folder(tickers):
+    """Load per-ticker CSVs into a wide DataFrame (index=Date, columns=tickers)."""
     frames = []
     for t in tickers:
         p = os.path.join(PRICES_DIR, f"{t}.csv")
@@ -50,8 +47,7 @@ def load_prices_from_folder(tickers: list[str]) -> pd.DataFrame:
 def load_spy_series(start_date: str, end_date: str) -> pd.Series:
     """
     Load SPY Adj Close between start_date and end_date (YYYY-MM-DD).
-    If SPY.csv exists locally, use it; otherwise fetch via yfinance.
-    Returns a pandas Series indexed by Date (may be a superset of requested dates).
+    Use local SPY.csv if present; otherwise fetch via yfinance (cached).
     """
     local = os.path.join(PRICES_DIR, "SPY.csv")
     if os.path.exists(local):
@@ -82,7 +78,10 @@ def max_drawdown(ret: pd.Series) -> float:
     return dd.min()
 
 def partition_groups(formation: pd.Series, mode: str):
-    """Return (top_index, bottom_index, ranks) based on selected grouping."""
+    """
+    Return (top_index, bottom_index, ranks) based on selected grouping.
+    10%/25% use percentile ranks. 50% uses median split with safe fallback.
+    """
     ranks = formation.rank(pct=True)
     if mode == "Decile (Top 10% vs Bottom 10%)":
         top = ranks[ranks >= 0.9].index
@@ -91,28 +90,51 @@ def partition_groups(formation: pd.Series, mode: str):
         top = ranks[ranks >= 0.75].index
         bot = ranks[ranks <= 0.25].index
     else:  # "Half (Top 50% vs Bottom 50%)"
-        top = ranks[ranks >= 0.5].index
-        bot = ranks[ranks <  0.5].index
+        med = formation.median()
+        top = formation[formation >= med].index
+        bot = formation[formation <  med].index
+        # Fallback if ties make one side empty
+        if len(top) == 0 or len(bot) == 0:
+            ranks2 = formation.rank(pct=True, method="average")
+            top = ranks2[ranks2 >= 0.5].index
+            bot = ranks2[ranks2 <  0.5].index
     return top, bot, ranks
 
-# -------------------- SIDEBAR --------------------
-st.sidebar.header("Parameters")
+def port_stats(series):
+    std = series.std()
+    if std == 0 or np.isnan(std):
+        return np.nan, np.nan, np.nan
+    ann_vol = std * np.sqrt(252)
+    sharpe  = (series.mean() / std) * np.sqrt(252)
+    return ann_vol, sharpe, max_drawdown(series)
 
-lookback_choice = st.sidebar.selectbox(
-    "Formation lookback",
-    ["1 month", "3 months", "6 months", "12 months"],
-    index=1
-)
-lb_map = {"1 month":1, "3 months":3, "6 months":6, "12 months":12}
-LOOKBACK_MONTHS = lb_map[lookback_choice]
+# -------------------- SIDEBAR (with Run button) --------------------
+with st.sidebar.form("controls"):
+    st.header("Parameters")
 
-group_mode = st.sidebar.selectbox(
-    "Grouping",
-    ["Decile (Top 10% vs Bottom 10%)",
-     "Quartile (Top 25% vs Bottom 25%)",
-     "Half (Top 50% vs Bottom 50%)"],
-    index=0
-)
+    lookback_choice = st.selectbox(
+        "Formation lookback",
+        ["1 month", "3 months", "6 months", "12 months"],
+        index=1
+    )
+    lb_map = {"1 month":1, "3 months":3, "6 months":6, "12 months":12}
+    LOOKBACK_MONTHS = lb_map[lookback_choice]
+
+    group_mode = st.selectbox(
+        "Grouping",
+        ["Decile (Top 10% vs Bottom 10%)",
+         "Quartile (Top 25% vs Bottom 25%)",
+         "Half (Top 50% vs Bottom 50%)"],
+        index=0
+    )
+
+    run = st.form_submit_button("Run")
+
+# Don’t run heavy work until user clicks
+if not run:
+    st.title("Momentum vs Reversal — S&P 500 (Point‑in‑Time) Q4’24–Q1’25")
+    st.info("Select your lookback and grouping in the sidebar, then click **Run**.")
+    st.stop()
 
 formation_end   = TEST_START - pd.Timedelta(days=1)
 formation_start = TEST_START - pd.DateOffset(months=LOOKBACK_MONTHS)
@@ -126,7 +148,7 @@ if not all_files:
     st.error(f"No CSVs found in `{PRICES_DIR}/`. Commit your per‑ticker files first.")
     st.stop()
 
-# Exclude benchmark (and any extras you may have stashed in the folder)
+# Exclude benchmark (and any extras you might keep in the folder)
 EXCLUDE = {"SPY"}
 tickers = [t for t in all_files if t not in EXCLUDE]
 
@@ -142,14 +164,17 @@ twin = rets.loc[TEST_START:TEST_END]
 keep = fwin.notna().all() & twin.notna().all()
 rets = rets.loc[:, keep.index[keep]]
 
-if rets.shape[1] < 100:
+if rets.shape[1] < 50:
     st.warning(f"Only {rets.shape[1]} tickers have complete data in both windows. Results may be noisy.")
 
 formation = fwin.apply(compute_cum)
 test      = twin.apply(compute_cum)
 
-# Partition by grouping
+# Partition by grouping (robust)
 top, bot, ranks = partition_groups(formation, group_mode)
+if len(top) == 0 or len(bot) == 0:
+    st.error("Grouping produced an empty portfolio (likely all formation returns tied). Try a different lookback.")
+    st.stop()
 
 # -------------------- TITLE --------------------
 st.title("Momentum vs Reversal — S&P 500 (Point‑in‑Time) Q4’24–Q1’25")
@@ -158,8 +183,8 @@ st.caption("Data source: per‑ticker CSVs in repo. Formation ranking uses selec
 
 # -------------------- CUMULATIVE (with SPY) --------------------
 twin2 = rets.loc[TEST_START:TEST_END]
-g_top = twin2[list(top)].mean(axis=1) if len(top) else pd.Series(index=twin2.index, dtype=float)
-g_bot = twin2[list(bot)].mean(axis=1) if len(bot) else pd.Series(index=twin2.index, dtype=float)
+g_top = twin2[list(top)].mean(axis=1)
+g_bot = twin2[list(bot)].mean(axis=1)
 
 curves = {}
 curves["Top"]    = (1 + g_top.fillna(0)).cumprod()
@@ -212,46 +237,56 @@ fig2.update_yaxes(tickformat=".2%")
 fig2.update_traces(text=avg_future["test"].map("{:.2%}".format), textposition="outside")
 st.plotly_chart(fig2, use_container_width=True)
 
-# -------------------- SCATTER + REGRESSION + CI --------------------
-X = sm.add_constant(formation)
-reg = sm.OLS(test, X, missing="drop").fit()
-xgrid = np.linspace(formation.min(), formation.max(), 200)
-pred  = reg.get_prediction(sm.add_constant(xgrid)).summary_frame(alpha=0.05)
+# -------------------- SCATTER + REGRESSION + CI (robust) --------------------
+valid = pd.notna(formation) & pd.notna(test)
+formation_ = formation[valid]
+test_      = test[valid]
 
-fig3 = go.Figure()
-fig3.add_trace(go.Scatter(
-    x=np.hstack([xgrid, xgrid[::-1]]),
-    y=np.hstack([pred["mean_ci_lower"], pred["mean_ci_upper"][::-1]]),
-    fill='toself', showlegend=False, fillcolor="rgba(0,0,255,0.1)",
-    line=dict(width=0)
-))
-fig3.add_trace(go.Scatter(
-    x=xgrid, y=pred["mean"], mode="lines",
-    name=f"Fit β={reg.params[1]:.2f} (t={reg.tvalues[1]:.2f}, p={reg.pvalues[1]:.3g})",
-    line=dict(color="black", dash="dash")
-))
-fig3.add_trace(go.Scatter(
-    x=formation, y=test, mode="markers", name="Stocks",
-    marker=dict(size=6, opacity=0.7)
-))
-fig3.update_layout(
-    title=f"Cross‑Section: Test vs Formation Return (lookback={LOOKBACK_MONTHS}m)",
-    xaxis_title="Formation Return",
-    yaxis_title="Test Return",
-    template="plotly_white"
-)
-fig3.update_xaxes(tickformat=".2%")
-fig3.update_yaxes(tickformat=".2%")
-st.plotly_chart(fig3, use_container_width=True)
+if (formation_.nunique() < 2) or (len(formation_) < 5):
+    st.warning("Not enough cross‑sectional variation to fit regression for this selection.")
+else:
+    X = sm.add_constant(formation_)
+    reg = sm.OLS(test_, X, missing="drop").fit()
+
+    # Safely get the slope regardless of its Series name
+    slope_key = next((k for k in reg.params.index if k.lower() != "const"), None)
+    if slope_key is None or len(reg.params) < 2:
+        st.warning("Regression returned only an intercept. Skipping regression chart.")
+    else:
+        beta  = float(reg.params.loc[slope_key])
+        tval  = float(reg.tvalues.loc[slope_key])
+        pval  = float(reg.pvalues.loc[slope_key])
+
+        xgrid = np.linspace(formation_.min(), formation_.max(), 200)
+        pred  = reg.get_prediction(sm.add_constant(xgrid)).summary_frame(alpha=0.05)
+
+        fig3 = go.Figure()
+        fig3.add_trace(go.Scatter(
+            x=np.hstack([xgrid, xgrid[::-1]]),
+            y=np.hstack([pred["mean_ci_lower"], pred["mean_ci_upper"][::-1]]),
+            fill='toself', showlegend=False, fillcolor="rgba(0,0,255,0.1)",
+            line=dict(width=0)
+        ))
+        fig3.add_trace(go.Scatter(
+            x=xgrid, y=pred["mean"], mode="lines",
+            name=f"Fit β={beta:.2f} (t={tval:.2f}, p={pval:.3g})",
+            line=dict(color="black", dash="dash")
+        ))
+        fig3.add_trace(go.Scatter(
+            x=formation_, y=test_, mode="markers", name="Stocks",
+            marker=dict(size=6, opacity=0.7)
+        ))
+        fig3.update_layout(
+            title=f"Cross‑Section: Test vs Formation Return (lookback={LOOKBACK_MONTHS}m)",
+            xaxis_title="Formation Return",
+            yaxis_title="Test Return",
+            template="plotly_white"
+        )
+        fig3.update_xaxes(tickformat=".2%")
+        fig3.update_yaxes(tickformat=".2%")
+        st.plotly_chart(fig3, use_container_width=True)
 
 # -------------------- SUMMARY TABLE --------------------
-def port_stats(series):
-    if series.std() == 0 or np.isnan(series.std()):
-        return np.nan, np.nan, np.nan
-    ann_vol = series.std() * np.sqrt(252)
-    sharpe  = (series.mean() / series.std()) * np.sqrt(252)
-    return ann_vol, sharpe, max_drawdown(series)
-
 ann_vol_top, sharpe_top, mdd_top = port_stats(g_top.dropna())
 ann_vol_bot, sharpe_bot, mdd_bot = port_stats(g_bot.dropna())
 ann_vol_ls,  sharpe_ls,  mdd_ls  = port_stats(ls.dropna())

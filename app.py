@@ -1,4 +1,4 @@
-# app.py
+# app.py (Option 2 – light, professional theme)
 import os
 import numpy as np
 import pandas as pd
@@ -9,31 +9,39 @@ import plotly.graph_objects as go
 import yfinance as yf
 
 # -------------------- THEME --------------------
+st.set_page_config(page_title="SPX Momentum vs Reversal (Q4'24–Q1'25)", layout="wide")
 st.markdown(
     """
     <style>
-    /* App background + default text color */
+    /* Page background + default text */
     .stApp {
-        background-color: #2f2f2f;  /* dark gray */
-        color: black;               /* as requested */
+        background-color: #f5f6fa;  /* light gray */
+        color: #111;                /* dark text */
     }
-    /* Sidebar background */
+    /* Sidebar white */
     section[data-testid="stSidebar"] {
-        background-color: #3a3a3a;
+        background-color: #ffffff;
     }
+    /* Make headings slightly darker */
+    h1, h2, h3, h4, h5 { color: #111; }
     </style>
     """,
     unsafe_allow_html=True
 )
+
+# Chart background color (white)
+PLOT_BG = "#ffffff"
+
+# Brand line colors
+COLOR_TOP = "#1f77b4"     # blue
+COLOR_BOTTOM = "#d62728"  # red
+COLOR_SPY = "#111111"     # black/dark gray
 
 # -------------------- CONFIG --------------------
 PRICES_DIR = "Necessary_CSVs"   # per-ticker CSVs with columns: Date, AdjClose (or Close)
 TEST_START = pd.Timestamp("2024-10-01")
 TEST_END   = pd.Timestamp("2025-03-31")
 INITIAL_INV = 10000
-PLOT_BG = "#e6e6e6"   # light gray for charts
-
-st.set_page_config(page_title="SPX Momentum vs Reversal (Q4'24–Q1'25)", layout="wide")
 
 # -------------------- LOADERS --------------------
 @st.cache_data(show_spinner=False)
@@ -43,7 +51,6 @@ def list_available_tickers():
 
 @st.cache_data(show_spinner=False)
 def load_prices_from_folder(tickers):
-    """Load per-ticker CSVs into a wide DataFrame (index=Date, columns=tickers)."""
     frames = []
     for t in tickers:
         p = os.path.join(PRICES_DIR, f"{t}.csv")
@@ -63,7 +70,6 @@ def load_prices_from_folder(tickers):
 
 @st.cache_data(show_spinner=False)
 def load_spy_series(start_date: str, end_date: str) -> pd.Series:
-    """Load SPY Adj Close between start_date and end_date (YYYY-MM-DD)."""
     local = os.path.join(PRICES_DIR, "SPY.csv")
     if os.path.exists(local):
         df = pd.read_csv(local, parse_dates=["Date"])
@@ -93,7 +99,6 @@ def max_drawdown(ret: pd.Series) -> float:
     return dd.min()
 
 def partition_groups(formation: pd.Series, mode: str):
-    """Return (top_index, bottom_index, ranks) for chosen grouping."""
     ranks = formation.rank(pct=True)
     if mode == "Decile (Top 10% vs Bottom 10%)":
         top = ranks[ranks >= 0.9].index
@@ -101,7 +106,7 @@ def partition_groups(formation: pd.Series, mode: str):
     elif mode == "Quartile (Top 25% vs Bottom 25%)":
         top = ranks[ranks >= 0.75].index
         bot = ranks[ranks <= 0.25].index
-    else:  # "Half (Top 50% vs Bottom 50%)"
+    else:  # Half
         med = formation.median()
         top = formation[formation >= med].index
         bot = formation[formation <  med].index
@@ -152,7 +157,7 @@ st.sidebar.write(f"Test: **{TEST_START.date()} → {TEST_END.date()}**")
 # -------------------- LOAD & FILTER DATA (robust) --------------------
 all_files = list_available_tickers()
 if not all_files:
-    st.error(f"No CSVs found in `{PRICES_DIR}/`. Commit your per‑ticker files first.")
+    st.error(f"No CSVs found in `{PRICES_DIR}/`.")
     st.stop()
 
 EXCLUDE = {"SPY"}
@@ -160,10 +165,9 @@ tickers = [t for t in all_files if t not in EXCLUDE]
 
 prices_all = load_prices_from_folder(tickers)
 if prices_all.empty:
-    st.error("Failed to load any prices from the CSVs (after exclusions).")
+    st.error("Failed to load any prices from the CSVs.")
     st.stop()
 
-# Compute returns and apply completeness filter; then RE-SLICE windows
 rets_all = prices_all.pct_change()
 fwin_all = rets_all.loc[formation_start:formation_end]
 twin_all = rets_all.loc[TEST_START:TEST_END]
@@ -185,10 +189,9 @@ if rets.shape[1] < 50:
 formation = fwin.apply(compute_cum)
 test      = twin.apply(compute_cum)
 
-# Groups based on filtered tickers only
 top, bot, ranks = partition_groups(formation, group_mode)
 if len(top) == 0 or len(bot) == 0:
-    st.error("Grouping produced an empty portfolio (likely all formation returns tied). Try a different lookback.")
+    st.error("Grouping produced an empty portfolio. Try a different lookback.")
     st.stop()
 
 # -------------------- TITLE --------------------
@@ -198,15 +201,11 @@ st.caption("Data source: per‑ticker CSVs in repo. Formation ranking uses selec
 
 # -------------------- CUMULATIVE (Top/Bottom/SPY) --------------------
 twin2 = rets.loc[TEST_START:TEST_END]
-if twin2.empty:
-    st.error("No trading days in the selected test window.")
-    st.stop()
-
 avail = set(twin2.columns)
 top_use = [t for t in list(top) if t in avail]
 bot_use = [t for t in list(bot) if t in avail]
 if len(top_use) == 0 or len(bot_use) == 0:
-    st.error("Selected groups are empty after data coverage filter. Try another lookback.")
+    st.error("Selected groups are empty after the coverage filter.")
     st.stop()
 
 g_top = twin2[top_use].mean(axis=1)
@@ -226,14 +225,23 @@ curves["SPY"] = (1 + spy_rets).cumprod()
 cum_df = pd.DataFrame(curves).dropna()
 cum_df = cum_df / cum_df.iloc[0] * INITIAL_INV
 
-fig1 = px.line(cum_df.reset_index(), x="Date", y=["Top","Bottom","SPY"],
-               title=(f"Cumulative Portfolio Value — {group_mode}  "
-                      f"(Formation {formation_start.date()}→{formation_end.date()})"),
-               labels={"value":"Portfolio Value ($)", "variable":"Series"})
-fig1.for_each_trace(lambda t: t.update(line=dict(width=3)))
-fig1.update_traces(hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>')
+fig1 = go.Figure()
+fig1.add_trace(go.Scatter(x=cum_df.index, y=cum_df["Top"],    name="Top",
+                          line=dict(width=3, color=COLOR_TOP),
+                          hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'))
+fig1.add_trace(go.Scatter(x=cum_df.index, y=cum_df["Bottom"], name="Bottom",
+                          line=dict(width=3, color=COLOR_BOTTOM),
+                          hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'))
+fig1.add_trace(go.Scatter(x=cum_df.index, y=cum_df["SPY"],    name="SPY",
+                          line=dict(width=2, color=COLOR_SPY, dash="dot"),
+                          hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'))
+fig1.update_layout(
+    title=(f"Cumulative Portfolio Value — {group_mode}  "
+           f"(Formation {formation_start.date()}→{formation_end.date()})"),
+    xaxis_title="Date", yaxis_title="Portfolio Value ($)",
+    template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG
+)
 fig1.update_yaxes(tickprefix="$", separatethousands=True)
-fig1.update_layout(plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG)
 st.plotly_chart(fig1, use_container_width=True)
 
 # -------------------- LONG–SHORT & SHORT–LONG --------------------
@@ -243,16 +251,14 @@ ls_w = (1 + ls.fillna(0)).cumprod(); ls_w = ls_w / ls_w.iloc[0] * INITIAL_INV
 sl_w = (1 + sl.fillna(0)).cumprod(); sl_w = sl_w / sl_w.iloc[0] * INITIAL_INV
 
 fig_ls = go.Figure()
-fig_ls.add_trace(go.Scatter(
-    x=ls_w.index, y=ls_w.values, mode="lines",
-    name="Long Top / Short Bottom", line=dict(width=3),
-    hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'
-))
-fig_ls.add_trace(go.Scatter(
-    x=sl_w.index, y=sl_w.values, mode="lines",
-    name="Long Bottom / Short Top",
-    hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'
-))
+fig_ls.add_trace(go.Scatter(x=ls_w.index, y=ls_w.values, mode="lines",
+                            name="Long Top / Short Bottom",
+                            line=dict(width=3, color=COLOR_TOP),
+                            hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'))
+fig_ls.add_trace(go.Scatter(x=sl_w.index, y=sl_w.values, mode="lines",
+                            name="Long Bottom / Short Top",
+                            line=dict(width=3, color=COLOR_BOTTOM),
+                            hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'))
 fig_ls.update_layout(
     title=f"Long–Short vs Short–Long ({group_mode})",
     xaxis_title="Date", yaxis_title="Value ($)",
@@ -261,22 +267,21 @@ fig_ls.update_layout(
 fig_ls.update_yaxes(tickprefix="$", separatethousands=True)
 st.plotly_chart(fig_ls, use_container_width=True)
 
-# -------------------- DECILE BAR (gradient view, no clipped labels) --------------------
+# -------------------- DECILE BAR --------------------
 deciles = (np.ceil(ranks * 10)).astype(int).clip(upper=10)
 decile_df = pd.DataFrame({"formation": formation, "test": test, "decile": deciles})
 avg_future = decile_df.groupby("decile", as_index=False)["test"].mean()
 
 fig2 = px.bar(avg_future, x="decile", y="test",
               title="Average Test Return by Formation Decile",
-              labels={"test":"Avg Test Return"})
+              labels={"test":"Avg Test Return"}, template="plotly_white")
 fig2.update_yaxes(tickformat=".2%")
 ymin, ymax = float(avg_future["test"].min()), float(avg_future["test"].max())
 pad = max(0.01, 0.12 * (ymax - ymin))
 fig2.update_yaxes(range=[ymin - pad, ymax + pad])
 fig2.update_traces(text=avg_future["test"].map("{:.2%}".format),
                    textposition="outside", cliponaxis=False)
-fig2.update_layout(margin=dict(t=80, b=60, l=70, r=40),
-                   template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG)
+fig2.update_layout(plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG, margin=dict(t=80, b=60, l=70, r=40))
 st.plotly_chart(fig2, use_container_width=True)
 
 # -------------------- SCATTER + REGRESSION + CI (selected groups only) --------------------
@@ -287,7 +292,7 @@ elif "Quartile" in group_mode:
 else:
     top_name, bot_name = "Top 50%", "Bottom 50%"
 
-sel_idx = top_use + bot_use  # only names that survived coverage filter
+sel_idx = top_use + bot_use
 formation_sel = formation.loc[sel_idx]
 test_sel      = test.loc[sel_idx]
 group_flag = pd.Series(index=sel_idx, dtype=object)
@@ -318,25 +323,23 @@ else:
     pred = reg.get_prediction(Xg).summary_frame(alpha=0.05)
 
     fig3 = go.Figure()
-    # CI band
     fig3.add_trace(go.Scatter(
         x=np.hstack([xgrid, xgrid[::-1]]),
         y=np.hstack([pred["mean_ci_lower"], pred["mean_ci_upper"][::-1]]),
-        fill='toself', showlegend=False, fillcolor="rgba(0,0,255,0.1)", line=dict(width=0)
+        fill='toself', showlegend=False, fillcolor="rgba(31, 119, 180, 0.12)", line=dict(width=0)
     ))
-    # Regression line
     fig3.add_trace(go.Scatter(
         x=xgrid, y=pred["mean"], mode="lines",
         name=f"Fit β={beta:.2f} (t={tval:.2f}, p={pval:.3g})",
-        line=dict(color="black", dash="dash"),
+        line=dict(color="#111", dash="dash"),
         hovertemplate='Formation: %{x:.2%}<br>Ŷ: %{y:.2%}<extra></extra>'
     ))
-    # Two group scatters with nice hover
-    for label, color in [(top_name, "royalblue"), (bot_name, "orangered")]:
+    # Group points
+    for label, color in [(top_name, COLOR_TOP), (bot_name, COLOR_BOTTOM)]:
         d = df_sel[df_sel["group"] == label]
         fig3.add_trace(go.Scatter(
             x=d["formation"], y=d["test"], mode="markers", name=label,
-            marker=dict(size=7, opacity=0.75, color=color),
+            marker=dict(size=7, opacity=0.8, color=color),
             customdata=np.stack([d["Ticker"].values], axis=-1),
             hovertemplate=(
                 "Ticker: %{customdata[0]}<br>"
@@ -345,7 +348,7 @@ else:
             )
         ))
     fig3.update_layout(
-        title=f"Cross‑Section (Selected Groups Only): {top_name} vs {bot_name} — lookback={LOOKBACK_MONTHS}m",
+        title=f"Cross‑Section (Selected Groups Only): {top_name} vs {bot_name}",
         xaxis_title="Formation Return", yaxis_title="Test Return",
         template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG
     )
@@ -358,6 +361,8 @@ def _stats(s):
     ann_vol, sharpe, mdd = port_stats(s.dropna())
     return compute_cum(s), ann_vol, sharpe, mdd
 
+ls = g_top - g_bot
+sl = g_bot - g_top
 cum_top, av_top, sh_top, dd_top   = _stats(g_top)
 cum_bot, av_bot, sh_bot, dd_bot   = _stats(g_bot)
 cum_ls,  av_ls,  sh_ls,  dd_ls    = _stats(ls)

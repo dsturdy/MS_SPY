@@ -249,50 +249,84 @@ fig2.update_yaxes(tickformat=".2%")
 fig2.update_traces(text=avg_future["test"].map("{:.2%}".format), textposition="outside")
 st.plotly_chart(fig2, use_container_width=True)
 
-# -------------------- SCATTER + REGRESSION + CI (robust, named columns) --------------------
-valid = pd.notna(formation) & pd.notna(test)
-formation_ = formation[valid]
-test_      = test[valid]
-
-if (formation_.nunique() < 2) or (len(formation_) < 5):
-    st.warning("Not enough cross‑sectional variation to fit regression for this selection.")
+# -------------------- SCATTER + REGRESSION + CI (filtered to selected groups) --------------------
+# Build a dataframe of only the selected top/bottom names
+if "Decile" in group_mode:
+    top_name, bot_name = "Top 10%", "Bottom 10%"
+elif "Quartile" in group_mode:
+    top_name, bot_name = "Top 25%", "Bottom 25%"
 else:
-    # explicitly name columns to avoid KeyError/AttributeError issues
-    X = pd.DataFrame({
-        "const": 1.0,
-        "formation": formation_.values
-    }, index=formation_.index)
+    top_name, bot_name = "Top 50%", "Bottom 50%"
 
-    reg = sm.OLS(test_, X, missing="drop").fit()
+sel_idx = list(top) + list(bot)
+formation_sel = formation.loc[sel_idx]
+test_sel      = test.loc[sel_idx]
+group_flag = pd.Series(index=sel_idx, dtype=object)
+group_flag.loc[list(top)] = top_name
+group_flag.loc[list(bot)] = bot_name
 
-    # slope is always the 'formation' coefficient
+df_sel = pd.DataFrame({
+    "Ticker": sel_idx,
+    "formation": formation_sel.values,
+    "test": test_sel.values,
+    "group": group_flag.values
+}).dropna()
+
+if df_sel.empty or df_sel["formation"].nunique() < 2:
+    st.warning("Not enough variation in the selected groups to plot regression.")
+else:
+    # OLS on the selected groups only
+    X = pd.DataFrame({"const": 1.0, "formation": df_sel["formation"].values}, index=df_sel["Ticker"])
+    y = pd.Series(df_sel["test"].values, index=df_sel["Ticker"])
+    reg = sm.OLS(y, X, missing="drop").fit()
+
     beta = float(reg.params["formation"])
     tval = float(reg.tvalues["formation"])
     pval = float(reg.pvalues["formation"])
 
-    # Prediction grid (use the same explicit column names)
-    xgrid = np.linspace(formation_.min(), formation_.max(), 200)
+    # Prediction grid + CI (based on selected points only)
+    xgrid = np.linspace(df_sel["formation"].min(), df_sel["formation"].max(), 200)
     Xg = pd.DataFrame({"const": 1.0, "formation": xgrid})
     pred = reg.get_prediction(Xg).summary_frame(alpha=0.05)
 
+    # Plot
     fig3 = go.Figure()
+
+    # CI band
     fig3.add_trace(go.Scatter(
         x=np.hstack([xgrid, xgrid[::-1]]),
         y=np.hstack([pred["mean_ci_lower"], pred["mean_ci_upper"][::-1]]),
         fill='toself', showlegend=False, fillcolor="rgba(0,0,255,0.1)", line=dict(width=0)
     ))
+
+    # Regression line
     fig3.add_trace(go.Scatter(
         x=xgrid, y=pred["mean"], mode="lines",
         name=f"Fit β={beta:.2f} (t={tval:.2f}, p={pval:.3g})",
-        line=dict(color="black", dash="dash")
+        line=dict(color="black", dash="dash"),
+        hovertemplate='Formation: %{x:.2%}<br>Ŷ: %{y:.2%}<extra></extra>'
     ))
-    fig3.add_trace(go.Scatter(
-        x=formation_, y=test_, mode="markers", name="Stocks",
-        marker=dict(size=6, opacity=0.7)
-    ))
+
+    # Two group scatters with nice hover
+    for label, color in [(top_name, "royalblue"), (bot_name, "orangered")]:
+        d = df_sel[df_sel["group"] == label]
+        custom = np.stack([d["Ticker"].values], axis=-1)  # ticker for hover
+        fig3.add_trace(go.Scatter(
+            x=d["formation"], y=d["test"],
+            mode="markers", name=label,
+            marker=dict(size=7, opacity=0.75, color=color),
+            customdata=custom,
+            hovertemplate=(
+                "Ticker: %{customdata[0]}<br>"
+                "Formation (In‑Sample) Return: %{x:.2%}<br>"
+                "Test (Out‑of‑Sample) Return: %{y:.2%}<extra></extra>"
+            )
+        ))
+
     fig3.update_layout(
-        title=f"Cross‑Section: Test vs Formation Return (lookback={LOOKBACK_MONTHS}m)",
-        xaxis_title="Formation Return", yaxis_title="Test Return",
+        title=f"Cross‑Section (Selected Groups Only): {top_name} vs {bot_name} — lookback={LOOKBACK_MONTHS}m",
+        xaxis_title="Formation Return",
+        yaxis_title="Test Return",
         template="plotly_white"
     )
     fig3.update_xaxes(tickformat=".2%")

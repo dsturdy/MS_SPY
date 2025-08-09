@@ -373,7 +373,7 @@ summary = pd.DataFrame([
     ["Bottom",      cum_bot, av_bot, sh_bot, dd_bot],
     ["Long–Short",  cum_ls,  av_ls,  sh_ls,  dd_ls ],
     ["Short–Long",  cum_sl,  av_sl,  sh_sl,  dd_sl]
-], columns=["Portfolio", "Cum Return", "Ann Vol", "Sharpe", "Max DD"]).set_index("Portfolio")
+], columns=["Portfolio", "Cumulative Return", "Annualized Vol", "Sharpe", "Max Draw Down"]).set_index("Portfolio")
 
 st.subheader("Summary (Test Window)")
 st.dataframe(summary.style.format({

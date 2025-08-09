@@ -159,9 +159,18 @@ curves = {}
 curves["Top"]    = (1 + g_top.fillna(0)).cumprod()
 curves["Bottom"] = (1 + g_bot.fillna(0)).cumprod()
 
-# SPY benchmark
-spy = load_spy_series(curves["Top"].index).pct_change().fillna(0)
-curves["SPY"] = (1 + spy).cumprod()
+# Existing curves dict already has "Top" and "Bottom"
+dates_index = curves["Top"].index
+
+spy_raw = load_spy_series(
+    dates_index.min().strftime("%Y-%m-%d"),
+    dates_index.max().strftime("%Y-%m-%d")
+)
+
+# align SPY to your exact dates AFTER caching
+spy_aligned = spy_raw.reindex(dates_index).ffill()
+spy_rets = spy_aligned.pct_change().fillna(0)
+curves["SPY"] = (1 + spy_rets).cumprod()
 
 cum_df = pd.DataFrame(curves).dropna()
 cum_df = cum_df / cum_df.iloc[0] * INITIAL_INV

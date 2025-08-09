@@ -46,24 +46,29 @@ def load_prices_from_folder(tickers: list[str]) -> pd.DataFrame:
     return wide
 
 @st.cache_data(show_spinner=False)
-def load_spy_series(dates_index: pd.DatetimeIndex) -> pd.Series:
+def load_spy_series(start_date: str, end_date: str) -> pd.Series:
     """
-    Try to load SPY from local folder; if not present, fetch from yfinance (cached).
+    Load SPY Adj Close between start_date and end_date (YYYY-MM-DD).
+    If SPY.csv exists locally, use it; otherwise fetch via yfinance.
+    Returns a pandas Series indexed by Date (may be a superset of requested dates).
     """
     local = os.path.join(PRICES_DIR, "SPY.csv")
     if os.path.exists(local):
         df = pd.read_csv(local, parse_dates=["Date"])
         col = "AdjClose" if "AdjClose" in df.columns else ("Close" if "Close" in df.columns else None)
         s = df.set_index("Date")[col].rename("SPY")
+        # clip to window (with a little pad for safety)
+        return s.loc[pd.to_datetime(start_date) - pd.Timedelta(days=5) :
+                     pd.to_datetime(end_date)   + pd.Timedelta(days=5)]
     else:
-        df = yf.download("SPY", start=dates_index.min()-pd.Timedelta(days=5),
-                         end=dates_index.max()+pd.Timedelta(days=5),
-                         progress=False, auto_adjust=False)
+        df = yf.download(
+            "SPY",
+            start=pd.to_datetime(start_date) - pd.Timedelta(days=5),
+            end  =pd.to_datetime(end_date)   + pd.Timedelta(days=5),
+            progress=False, auto_adjust=False, threads=False
+        )
         col = "Adj Close" if "Adj Close" in df.columns else "Close"
-        s = df[col].rename("SPY")
-    # align to app dates
-    s = s.reindex(dates_index).ffill()
-    return s
+        return df[col].rename("SPY")
 
 # -------------------- UTILS --------------------
 def compute_cum(x: pd.Series) -> float:

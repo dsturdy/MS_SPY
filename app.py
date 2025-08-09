@@ -237,7 +237,7 @@ fig2.update_yaxes(tickformat=".2%")
 fig2.update_traces(text=avg_future["test"].map("{:.2%}".format), textposition="outside")
 st.plotly_chart(fig2, use_container_width=True)
 
-# -------------------- SCATTER + REGRESSION + CI (robust) --------------------
+# -------------------- SCATTER + REGRESSION + CI (robust, named columns) --------------------
 valid = pd.notna(formation) & pd.notna(test)
 formation_ = formation[valid]
 test_      = test[valid]
@@ -245,46 +245,47 @@ test_      = test[valid]
 if (formation_.nunique() < 2) or (len(formation_) < 5):
     st.warning("Not enough cross‑sectional variation to fit regression for this selection.")
 else:
-    X = sm.add_constant(formation_)
+    # explicitly name columns to avoid KeyError/AttributeError issues
+    X = pd.DataFrame({
+        "const": 1.0,
+        "formation": formation_.values
+    }, index=formation_.index)
+
     reg = sm.OLS(test_, X, missing="drop").fit()
 
-    # Safely get the slope regardless of its Series name
-    slope_key = next((k for k in reg.params.index if k.lower() != "const"), None)
-    if slope_key is None or len(reg.params) < 2:
-        st.warning("Regression returned only an intercept. Skipping regression chart.")
-    else:
-        beta  = float(reg.params.loc[slope_key])
-        tval  = float(reg.tvalues.loc[slope_key])
-        pval  = float(reg.pvalues.loc[slope_key])
+    # slope is always the 'formation' coefficient
+    beta = float(reg.params["formation"])
+    tval = float(reg.tvalues["formation"])
+    pval = float(reg.pvalues["formation"])
 
-        xgrid = np.linspace(formation_.min(), formation_.max(), 200)
-        pred  = reg.get_prediction(sm.add_constant(xgrid)).summary_frame(alpha=0.05)
+    # Prediction grid (use the same explicit column names)
+    xgrid = np.linspace(formation_.min(), formation_.max(), 200)
+    Xg = pd.DataFrame({"const": 1.0, "formation": xgrid})
+    pred = reg.get_prediction(Xg).summary_frame(alpha=0.05)
 
-        fig3 = go.Figure()
-        fig3.add_trace(go.Scatter(
-            x=np.hstack([xgrid, xgrid[::-1]]),
-            y=np.hstack([pred["mean_ci_lower"], pred["mean_ci_upper"][::-1]]),
-            fill='toself', showlegend=False, fillcolor="rgba(0,0,255,0.1)",
-            line=dict(width=0)
-        ))
-        fig3.add_trace(go.Scatter(
-            x=xgrid, y=pred["mean"], mode="lines",
-            name=f"Fit β={beta:.2f} (t={tval:.2f}, p={pval:.3g})",
-            line=dict(color="black", dash="dash")
-        ))
-        fig3.add_trace(go.Scatter(
-            x=formation_, y=test_, mode="markers", name="Stocks",
-            marker=dict(size=6, opacity=0.7)
-        ))
-        fig3.update_layout(
-            title=f"Cross‑Section: Test vs Formation Return (lookback={LOOKBACK_MONTHS}m)",
-            xaxis_title="Formation Return",
-            yaxis_title="Test Return",
-            template="plotly_white"
-        )
-        fig3.update_xaxes(tickformat=".2%")
-        fig3.update_yaxes(tickformat=".2%")
-        st.plotly_chart(fig3, use_container_width=True)
+    fig3 = go.Figure()
+    fig3.add_trace(go.Scatter(
+        x=np.hstack([xgrid, xgrid[::-1]]),
+        y=np.hstack([pred["mean_ci_lower"], pred["mean_ci_upper"][::-1]]),
+        fill='toself', showlegend=False, fillcolor="rgba(0,0,255,0.1)", line=dict(width=0)
+    ))
+    fig3.add_trace(go.Scatter(
+        x=xgrid, y=pred["mean"], mode="lines",
+        name=f"Fit β={beta:.2f} (t={tval:.2f}, p={pval:.3g})",
+        line=dict(color="black", dash="dash")
+    ))
+    fig3.add_trace(go.Scatter(
+        x=formation_, y=test_, mode="markers", name="Stocks",
+        marker=dict(size=6, opacity=0.7)
+    ))
+    fig3.update_layout(
+        title=f"Cross‑Section: Test vs Formation Return (lookback={LOOKBACK_MONTHS}m)",
+        xaxis_title="Formation Return", yaxis_title="Test Return",
+        template="plotly_white"
+    )
+    fig3.update_xaxes(tickformat=".2%")
+    fig3.update_yaxes(tickformat=".2%")
+    st.plotly_chart(fig3, use_container_width=True)
 
 # -------------------- SUMMARY TABLE --------------------
 ann_vol_top, sharpe_top, mdd_top = port_stats(g_top.dropna())

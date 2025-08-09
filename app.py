@@ -336,16 +336,23 @@ else:
 # -------------------- SUMMARY TABLE --------------------
 ann_vol_top, sharpe_top, mdd_top = port_stats(g_top.dropna())
 ann_vol_bot, sharpe_bot, mdd_bot = port_stats(g_bot.dropna())
+
+ls = g_top - g_bot           # Long Top / Short Bottom
+sl = g_bot - g_top           # Long Bottom / Short Top
+
 ann_vol_ls,  sharpe_ls,  mdd_ls  = port_stats(ls.dropna())
+ann_vol_sl,  sharpe_sl,  mdd_sl  = port_stats(sl.dropna())
 
 summary = pd.DataFrame([
-    ["Top",    compute_cum(g_top), ann_vol_top, sharpe_top, mdd_top],
-    ["Bottom", compute_cum(g_bot), ann_vol_bot, sharpe_bot, mdd_bot],
-    ["Long–Short", compute_cum(ls), ann_vol_ls, sharpe_ls, mdd_ls]
+    ["Top",         compute_cum(g_top), ann_vol_top, sharpe_top, mdd_top],
+    ["Bottom",      compute_cum(g_bot), ann_vol_bot, sharpe_bot, mdd_bot],
+    ["Long–Short",  compute_cum(ls),    ann_vol_ls,  sharpe_ls,  mdd_ls ],
+    ["Short–Long",  compute_cum(sl),    ann_vol_sl,  sharpe_sl,  mdd_sl]
 ], columns=["Portfolio", "Cum Return", "Ann Vol", "Sharpe", "Max DD"]).set_index("Portfolio")
 
 st.subheader("Summary (Test Window)")
 st.dataframe(summary.style.format({
     "Cum Return":"{:.2%}", "Ann Vol":"{:.2%}", "Sharpe":"{:.2f}", "Max DD":"{:.2%}"
 }))
+
 st.caption("β>0 & significant → momentum; β<0 & significant → reversal; else → inconclusive.")

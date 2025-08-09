@@ -44,10 +44,7 @@ def load_prices_from_folder(tickers):
 
 @st.cache_data(show_spinner=False)
 def load_spy_series(start_date: str, end_date: str) -> pd.Series:
-    """
-    Load SPY Adj Close between start_date and end_date (YYYY-MM-DD).
-    Use local SPY.csv if present; otherwise fetch via yfinance (cached).
-    """
+    """Load SPY Adj Close between start_date and end_date (YYYY-MM-DD)."""
     local = os.path.join(PRICES_DIR, "SPY.csv")
     if os.path.exists(local):
         df = pd.read_csv(local, parse_dates=["Date"])
@@ -77,10 +74,7 @@ def max_drawdown(ret: pd.Series) -> float:
     return dd.min()
 
 def partition_groups(formation: pd.Series, mode: str):
-    """
-    Return (top_index, bottom_index, ranks) based on selected grouping.
-    10%/25% use percentile ranks. 50% uses median split with safe fallback.
-    """
+    """Return (top_index, bottom_index, ranks) for chosen grouping."""
     ranks = formation.rank(pct=True)
     if mode == "Decile (Top 10% vs Bottom 10%)":
         top = ranks[ranks >= 0.9].index
@@ -92,7 +86,6 @@ def partition_groups(formation: pd.Series, mode: str):
         med = formation.median()
         top = formation[formation >= med].index
         bot = formation[formation <  med].index
-        # Fallback if ties make one side empty
         if len(top) == 0 or len(bot) == 0:
             ranks2 = formation.rank(pct=True, method="average")
             top = ranks2[ranks2 >= 0.5].index
@@ -129,7 +122,6 @@ with st.sidebar.form("controls"):
 
     run = st.form_submit_button("Run")
 
-# Don’t run heavy work until user clicks
 if not run:
     st.title("Momentum vs Reversal — S&P 500 (Point‑in‑Time) Q4’24–Q1’25")
     st.info("Select your lookback and grouping in the sidebar, then click **Run**.")
@@ -141,13 +133,12 @@ formation_start = TEST_START - pd.DateOffset(months=LOOKBACK_MONTHS)
 st.sidebar.write(f"Formation: **{formation_start.date()} → {formation_end.date()}**")
 st.sidebar.write(f"Test: **{TEST_START.date()} → {TEST_END.date()}**")
 
-# -------------------- LOAD DATA --------------------
+# -------------------- LOAD & FILTER DATA (FIXED) --------------------
 all_files = list_available_tickers()
 if not all_files:
     st.error(f"No CSVs found in `{PRICES_DIR}/`. Commit your per‑ticker files first.")
     st.stop()
 
-# Exclude benchmark (and any extras you might keep in the folder)
 EXCLUDE = {"SPY"}
 tickers = [t for t in all_files if t not in EXCLUDE]
 
@@ -156,17 +147,21 @@ if prices_all.empty:
     st.error("Failed to load any prices from the CSVs (after exclusions).")
     st.stop()
 
-# Require full data (no NaNs) in both formation and test windows
-rets = prices_all.pct_change()
-fwin = rets.loc[formation_start:formation_end]
-twin = rets.loc[TEST_START:TEST_END]
+# Compute returns and apply completeness filter; then RE-SLICE windows
+rets_all = prices_all.pct_change()
+fwin_all = rets_all.loc[formation_start:formation_end]
+twin_all = rets_all.loc[TEST_START:TEST_END]
 
-if fwin.empty or twin.empty:
+if fwin_all.empty or twin_all.empty:
     st.error("No trading days in the selected formation or test window.")
     st.stop()
 
-keep = fwin.notna().all() & twin.notna().all()
-rets = rets.loc[:, keep.index[keep]]
+keep = fwin_all.notna().all() & twin_all.notna().all()
+cols = keep.index[keep]
+
+rets = rets_all.loc[:, cols]
+fwin = rets.loc[formation_start:formation_end]
+twin = rets.loc[TEST_START:TEST_END]
 
 if rets.shape[1] < 50:
     st.warning(f"Only {rets.shape[1]} tickers have complete data in both windows. Results may be noisy.")
@@ -174,7 +169,7 @@ if rets.shape[1] < 50:
 formation = fwin.apply(compute_cum)
 test      = twin.apply(compute_cum)
 
-# Partition by grouping (robust)
+# Groups based on filtered tickers only
 top, bot, ranks = partition_groups(formation, group_mode)
 if len(top) == 0 or len(bot) == 0:
     st.error("Grouping produced an empty portfolio (likely all formation returns tied). Try a different lookback.")
@@ -191,14 +186,21 @@ if twin2.empty:
     st.error("No trading days in the selected test window.")
     st.stop()
 
-g_top = twin2[list(top)].mean(axis=1)
-g_bot = twin2[list(bot)].mean(axis=1)
+# Safety: intersect selected groups with actually available columns
+avail = set(twin2.columns)
+top_use = [t for t in list(top) if t in avail]
+bot_use = [t for t in list(bot) if t in avail]
+if len(top_use) == 0 or len(bot_use) == 0:
+    st.error("Selected groups are empty after data coverage filter. Try another lookback.")
+    st.stop()
+
+g_top = twin2[top_use].mean(axis=1)
+g_bot = twin2[bot_use].mean(axis=1)
 
 curves = {}
 curves["Top"]    = (1 + g_top.fillna(0)).cumprod()
 curves["Bottom"] = (1 + g_bot.fillna(0)).cumprod()
 
-# SPY benchmark (cached by date strings)
 dates_index = curves["Top"].index
 spy_raw = load_spy_series(
     dates_index.min().strftime("%Y-%m-%d"),
@@ -221,7 +223,7 @@ if cum_df.empty:
 else:
     st.plotly_chart(fig1, use_container_width=True)
 
-# -------------------- LONG–SHORT & SHORT–LONG (with clear legend) --------------------
+# -------------------- LONG–SHORT & SHORT–LONG (clear legend) --------------------
 ls = g_top - g_bot
 sl = g_bot - g_top
 ls_w = (1 + ls.fillna(0)).cumprod(); ls_w = ls_w / ls_w.iloc[0] * INITIAL_INV
@@ -238,7 +240,7 @@ fig_ls.update_layout(
 )
 st.plotly_chart(fig_ls, use_container_width=True)
 
-# -------------------- DECILE BAR (gradient view, no clipped labels) --------------------
+# -------------------- DECILE BAR (no clipped labels) --------------------
 deciles = (np.ceil(ranks * 10)).astype(int).clip(upper=10)
 decile_df = pd.DataFrame({"formation": formation, "test": test, "decile": deciles})
 avg_future = decile_df.groupby("decile", as_index=False)["test"].mean()
@@ -247,7 +249,6 @@ fig2 = px.bar(avg_future, x="decile", y="test",
               title="Average Test Return by Formation Decile",
               labels={"test":"Avg Test Return"})
 fig2.update_yaxes(tickformat=".2%")
-# give headroom so text fits above/below bars
 ymin, ymax = float(avg_future["test"].min()), float(avg_future["test"].max())
 pad = max(0.01, 0.12 * (ymax - ymin))
 fig2.update_yaxes(range=[ymin - pad, ymax + pad])
@@ -264,12 +265,12 @@ elif "Quartile" in group_mode:
 else:
     top_name, bot_name = "Top 50%", "Bottom 50%"
 
-sel_idx = list(top) + list(bot)
+sel_idx = top_use + bot_use  # only names that survived coverage filter
 formation_sel = formation.loc[sel_idx]
 test_sel      = test.loc[sel_idx]
 group_flag = pd.Series(index=sel_idx, dtype=object)
-group_flag.loc[list(top)] = top_name
-group_flag.loc[list(bot)] = bot_name
+group_flag.loc[top_use] = top_name
+group_flag.loc[bot_use] = bot_name
 
 df_sel = pd.DataFrame({
     "Ticker": sel_idx,
@@ -281,7 +282,6 @@ df_sel = pd.DataFrame({
 if df_sel.empty or df_sel["formation"].nunique() < 2:
     st.warning("Not enough variation in the selected groups to plot regression.")
 else:
-    # OLS on the selected groups only (explicit names remove KeyError risk)
     X = pd.DataFrame({"const": 1.0, "formation": df_sel["formation"].values},
                      index=df_sel["Ticker"])
     y = pd.Series(df_sel["test"].values, index=df_sel["Ticker"])
@@ -291,26 +291,22 @@ else:
     tval = float(reg.tvalues["formation"])
     pval = float(reg.pvalues["formation"])
 
-    # Prediction grid + CI (based on selected points only)
     xgrid = np.linspace(df_sel["formation"].min(), df_sel["formation"].max(), 200)
     Xg = pd.DataFrame({"const": 1.0, "formation": xgrid})
     pred = reg.get_prediction(Xg).summary_frame(alpha=0.05)
 
     fig3 = go.Figure()
-    # CI band
     fig3.add_trace(go.Scatter(
         x=np.hstack([xgrid, xgrid[::-1]]),
         y=np.hstack([pred["mean_ci_lower"], pred["mean_ci_upper"][::-1]]),
         fill='toself', showlegend=False, fillcolor="rgba(0,0,255,0.1)", line=dict(width=0)
     ))
-    # Regression line
     fig3.add_trace(go.Scatter(
         x=xgrid, y=pred["mean"], mode="lines",
         name=f"Fit β={beta:.2f} (t={tval:.2f}, p={pval:.3g})",
         line=dict(color="black", dash="dash"),
         hovertemplate='Formation: %{x:.2%}<br>Ŷ: %{y:.2%}<extra></extra>'
     ))
-    # Two groups
     for label, color in [(top_name, "royalblue"), (bot_name, "orangered")]:
         d = df_sel[df_sel["group"] == label]
         fig3.add_trace(go.Scatter(
@@ -334,7 +330,6 @@ else:
 # -------------------- SUMMARY TABLE --------------------
 ann_vol_top, sharpe_top, mdd_top = port_stats(g_top.dropna())
 ann_vol_bot, sharpe_bot, mdd_bot = port_stats(g_bot.dropna())
-
 ann_vol_ls,  sharpe_ls,  mdd_ls  = port_stats(ls.dropna())
 ann_vol_sl,  sharpe_sl,  mdd_sl  = port_stats(sl.dropna())
 

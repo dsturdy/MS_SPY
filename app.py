@@ -131,7 +131,7 @@ with st.sidebar.form("controls"):
 
     group_mode = st.selectbox(
         "Grouping",
-        ["Decile (Top 10% vs Bottom 10%)", "Quartile (Top 25% vs Bottom 25%)", "Half (Top 50% vs Bottom 50%)"],
+        ["Top 10% vs Bottom 10%", "Top 25% vs Bottom 25%", "Top 50% vs Bottom 50%"],
         index=0
     )
     audit_on = st.checkbox("Audit mode: show intermediate tables", value=False)

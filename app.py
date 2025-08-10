@@ -1,4 +1,4 @@
-# app.py — SPX Momentum vs Reversal (Q4'24–Q1'25)
+# app.py — SPX Momentum vs Reversion (Q4'24–Q1'25)
 import os
 import io
 import zipfile

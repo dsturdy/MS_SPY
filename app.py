@@ -213,7 +213,7 @@ if len(top) == 0 or len(bot) == 0:
 
 # ==================== TITLE ====================
 st.title("Momentum vs Reversal — S&P 500 (Point-in-Time) Q4’24–Q1’25")
-st.caption("Data is sourced from CSVs in Github. Formation (in-sample) uses user chosen lookback and the test window is Oct 1, 2024 → Mar 28, 2025.")
+st.caption("Data is sourced from CSVs in Github. Formation (in-sample) uses user chosen lookback with a test (out-of-sample) window of: Oct 1, 2024 → Mar 28, 2025.")
 st.caption("Created by Dylan Sturdevant for Morgan Stanley exercise")
 
 # ==================== ANCHOR & GROUP PRICES ====================

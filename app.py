@@ -162,8 +162,8 @@ if not run:
 
 formation_end   = TEST_START - pd.Timedelta(days=1)
 formation_start = TEST_START - pd.DateOffset(months=LOOKBACK_MONTHS)
-st.sidebar.write(f"Formation: **{formation_start.date()} → {formation_end.date()}**")
-st.sidebar.write(f"Test: **{TEST_START.date()} → {TEST_END.date()}**")
+st.sidebar.write(f"in-sample: **{formation_start.date()} → {formation_end.date()}**")
+st.sidebar.write(f"out-of-sample: **{TEST_START.date()} → {TEST_END.date()}**")
 
 # ==================== LOAD & FILTER ====================
 all_files = list_available_tickers()

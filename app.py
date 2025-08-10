@@ -354,7 +354,7 @@ for d, members_idx in deciles_full.groupby(deciles_full).groups.items():
 avg_future = pd.DataFrame(decile_rows).sort_values("decile")
 fig2 = px.bar(
     avg_future, x="decile", y="test_total_return",
-    title="Compounded Test Return by Formation Decile (Buy & Hold, anchor = $10k)",
+    title="Compounded (out-of-sample) Return by decile",
     labels={"test_total_return": "Total Return"},
     template="plotly_white"
 )

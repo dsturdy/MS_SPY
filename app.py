@@ -446,13 +446,13 @@ cum_ls,  av_ls,  sh_ls,  dd_ls  = _stats_from_series(V_ls_ext,  V_ls.pct_change(
 cum_sl,  av_sl,  sh_sl,  dd_sl  = _stats_from_series(V_sl_ext,  V_sl.pct_change().fillna(0))
 
 summary = pd.DataFrame([
-    ["Top (Buy&Hold)",        cum_top, av_top, sh_top, dd_top],
-    ["Bottom (Buy&Hold)",     cum_bot, av_bot, sh_bot, dd_bot],
-    ["Long–Short (Buy&Hold)", cum_ls,  av_ls,  sh_ls,  dd_ls ],
-    ["Short–Long (Buy&Hold)", cum_sl,  av_sl,  sh_sl,  dd_sl]
+    ["Top",        cum_top, av_top, sh_top, dd_top],
+    ["Bottom",     cum_bot, av_bot, sh_bot, dd_bot],
+    ["Long–Short", cum_ls,  av_ls,  sh_ls,  dd_ls ],
+    ["Short–Long", cum_sl,  av_sl,  sh_sl,  dd_sl]
 ], columns=["Portfolio", "Cumulative Return", "Annualized Vol", "Sharpe", "Max Drawdown"]).set_index("Portfolio")
 
-st.subheader("Summary (Test Window) — Buy & Hold")
+st.subheader("Summary")
 st.dataframe(summary.style.format({
     "Cumulative Return": "{:.2%}",
     "Annualized Vol":    "{:.2%}",

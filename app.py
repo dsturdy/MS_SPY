@@ -294,8 +294,8 @@ fig1.add_trace(go.Scatter(
 ))
 
 fig1.update_layout(
-    title=f"Cumulative Portfolio Value — Buy & Hold ({group_mode})  "
-          f"(Formation {formation_start.date()} → {formation_end.date()})",
+    title=f"Cumulative Portfolio Value: {group_mode}  "
+          f"(in-sample {formation_start.date()} → {formation_end.date()})",
     xaxis_title="Date",
     yaxis_title="Portfolio Value ($)",
     template="plotly_white",
@@ -314,20 +314,20 @@ fig_ls = go.Figure()
 
 fig_ls.add_trace(go.Scatter(
     x=V_ls.index, y=V_ls.values,
-    name="Long Top / Short Bottom",
+    name="Long Top / Short Bottom (Momentum)",
     hovertemplate="%{x|%Y-%m-%d}<br>Long Top / Short Bottom: $%{y:,.2f}<extra></extra>",
     line=dict(width=3, color=COLOR_TOP)
 ))
 
 fig_ls.add_trace(go.Scatter(
     x=V_sl.index, y=V_sl.values,
-    name="Long Bottom / Short Top",
+    name="Long Bottom / Short Top (Mean Reversion)",
     hovertemplate="%{x|%Y-%m-%d}<br>Long Bottom / Short Top: $%{y:,.2f}<extra></extra>",
     line=dict(width=3, color=COLOR_BOT)
 ))
 
 fig_ls.update_layout(
-    title=f"Long–Short vs Short–Long — Buy & Hold ({group_mode})",
+    title=f"Long–Short vs Short–Long: {group_mode}",
     xaxis_title="Date",
     yaxis_title="Portfolio Value ($)",
     template="plotly_white",

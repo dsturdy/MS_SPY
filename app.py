@@ -229,7 +229,7 @@ spy_rets = spy_aligned.pct_change().fillna(0)
 curves["SPY"] = (1 + spy_rets).cumprod()
 
 cum_df = pd.DataFrame(curves).dropna()
-cum_df = cum_df / cum_df.iloc[0] * INITIAL_INV
+cum_df = cum_df * INITIAL_INV   # first point = INITIAL_INV * (1 + r_10/1)
 
 fig1 = go.Figure()
 fig1.add_trace(go.Scatter(x=cum_df.index, y=cum_df["Top"],    name="Top",
@@ -253,8 +253,8 @@ st.plotly_chart(fig1, use_container_width=True)
 # -------------------- LONG–SHORT & SHORT–LONG --------------------
 ls = g_top - g_bot
 sl = g_bot - g_top
-ls_w = (1 + ls.fillna(0)).cumprod(); ls_w = ls_w / ls_w.iloc[0] * INITIAL_INV
-sl_w = (1 + sl.fillna(0)).cumprod(); sl_w = sl_w / sl_w.iloc[0] * INITIAL_INV
+ls_w = (1 + ls.fillna(0)).cumprod() * INITIAL_INV
+sl_w = (1 + sl.fillna(0)).cumprod() * INITIAL_INV
 
 fig_ls = go.Figure()
 fig_ls.add_trace(go.Scatter(x=ls_w.index, y=ls_w.values, mode="lines",

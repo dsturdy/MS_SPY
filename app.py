@@ -124,6 +124,22 @@ def buyhold_value(prices: pd.DataFrame, notional: float) -> pd.Series:
 def series_returns_from_value(V: pd.Series) -> pd.Series:
     return V.pct_change().fillna(0)
 
+# ---- Fixed-shares helpers (explicit, no rebalancing) ----
+def _equal_weight_shares(p0: pd.Series, notional: float) -> pd.Series:
+    """Fixed shares sized at the anchor date; no rebalancing afterward."""
+    return (notional / len(p0)) / p0
+
+def _long_leg_value(px_ext: pd.DataFrame, p0: pd.Series, notional: float) -> pd.Series:
+    """Buy-and-hold long leg (fixed shares)."""
+    sh = _equal_weight_shares(p0, notional)
+    return px_ext @ sh
+
+def _short_leg_value(px_ext: pd.DataFrame, p0: pd.Series, notional: float) -> pd.Series:
+    """Buy-and-hold short leg (fixed shares) = initial cash + MTM P&L."""
+    sh = _equal_weight_shares(p0, notional)
+    pnl = (sh * (p0 - px_ext)).sum(axis=1)
+    return notional + pnl
+
 # ==================== SIDEBAR ====================
 with st.sidebar.form("controls"):
     st.header("Parameters")
@@ -152,7 +168,7 @@ st.sidebar.write(f"Test: **{TEST_START.date()} → {TEST_END.date()}**")
 # ==================== LOAD & FILTER ====================
 all_files = list_available_tickers()
 if not all_files:
-    st.error(f"No CSVs found in {PRICES_DIR}/.")
+    st.error(f"No CSVs found in `{PRICES_DIR}/`.")
     st.stop()
 
 tickers = [t for t in all_files if t != "SPY"]
@@ -234,35 +250,25 @@ V_top = V_top_ext.loc[TEST_START:]
 V_bot = V_bot_ext.loc[TEST_START:]
 
 # SPY
-spy_raw   = load_spy_series(anchor_date.strftime("%Y-%m-%d"), TEST_END.strftime("%Y-%m-%d"))
+spy_raw    = load_spy_series(anchor_date.strftime("%Y-%m-%d"), TEST_END.strftime("%Y-%m-%d"))
 spy_px_ext = spy_raw.reindex(px_test_all_ext.index).ffill()
 V_spy_ext  = (spy_px_ext / spy_px_ext.iloc[0]) * INITIAL_INV
 V_spy      = V_spy_ext.loc[TEST_START:]
 
-# Long–Short & Short–Long (equal half notional per leg)
-half = INITIAL_INV / 2.0
+# ==================== Long–Short & Short–Long (fixed shares, no rebal) ====================
+half = INITIAL_INV / 2.0  # $5k per leg
 
-# LS: +Top (half) / -Bottom (half)
-shares_top_long_half = (half / len(p0_top)) / p0_top
-V_long_top_ext       = px_top_ext @ shares_top_long_half
-
-shares_bot_short_half = (half / len(p0_bot)) / p0_bot
-pnl_short_bot_ext     = (shares_bot_short_half * (p0_bot - px_bot_ext)).sum(axis=1)
-V_short_bot_ext       = half + pnl_short_bot_ext
-
-V_ls_ext = (V_long_top_ext + V_short_bot_ext)
+# Momentum: +Top (half) / -Bottom (half)
+V_long_top_ext  = _long_leg_value(px_top_ext, p0_top, half)
+V_short_bot_ext = _short_leg_value(px_bot_ext, p0_bot, half)
+V_ls_ext = V_long_top_ext + V_short_bot_ext
 V_ls_ext = V_ls_ext / V_ls_ext.iloc[0] * INITIAL_INV
 V_ls     = V_ls_ext.loc[TEST_START:]
 
-# SL: +Bottom (half) / -Top (half)
-shares_bot_long_half = (half / len(p0_bot)) / p0_bot
-V_long_bot_ext       = px_bot_ext @ shares_bot_long_half
-
-shares_top_short_half = (half / len(p0_top)) / p0_top
-pnl_short_top_ext     = (shares_top_short_half * (p0_top - px_top_ext)).sum(axis=1)
-V_short_top_ext       = half + pnl_short_top_ext
-
-V_sl_ext = (V_long_bot_ext + V_short_top_ext)
+# Mean Reversion: +Bottom (half) / -Top (half)
+V_long_bot_ext  = _long_leg_value(px_bot_ext, p0_bot, half)
+V_short_top_ext = _short_leg_value(px_top_ext, p0_top, half)
+V_sl_ext = V_long_bot_ext + V_short_top_ext
 V_sl_ext = V_sl_ext / V_sl_ext.iloc[0] * INITIAL_INV
 V_sl     = V_sl_ext.loc[TEST_START:]
 
@@ -271,28 +277,24 @@ V_sl     = V_sl_ext.loc[TEST_START:]
 cum_df = pd.DataFrame({"Top": V_top, "Bottom": V_bot, "SPY": V_spy}).dropna(how="all")
 
 fig1 = go.Figure()
-
 fig1.add_trace(go.Scatter(
     x=cum_df.index, y=cum_df["Top"],
     name="Top",
     hovertemplate="%{x|%Y-%m-%d}<br>Top: $%{y:,.2f}<extra></extra>",
     line=dict(width=3, color=COLOR_TOP)
 ))
-
 fig1.add_trace(go.Scatter(
     x=cum_df.index, y=cum_df["Bottom"],
     name="Bottom",
     hovertemplate="%{x|%Y-%m-%d}<br>Bottom: $%{y:,.2f}<extra></extra>",
     line=dict(width=3, color=COLOR_BOT)
 ))
-
 fig1.add_trace(go.Scatter(
     x=cum_df.index, y=cum_df["SPY"],
     name="SPY",
     hovertemplate="%{x|%Y-%m-%d}<br>SPY: $%{y:,.2f}<extra></extra>",
     line=dict(width=2, color=COLOR_SPY, dash="dot")
 ))
-
 fig1.update_layout(
     title=f"Cumulative Portfolio Value: {group_mode}  "
           f"(in-sample {formation_start.date()} → {formation_end.date()})",
@@ -304,28 +306,23 @@ fig1.update_layout(
     hovermode="x unified",
     hoverlabel=dict(namelength=-1)
 )
-
 fig1.update_yaxes(tickprefix="$", separatethousands=True)
-
 st.plotly_chart(fig1, use_container_width=True)
 
 # LS vs SL
 fig_ls = go.Figure()
-
 fig_ls.add_trace(go.Scatter(
     x=V_ls.index, y=V_ls.values,
     name="Long Top / Short Bottom (Momentum)",
     hovertemplate="%{x|%Y-%m-%d}<br>Long Top / Short Bottom: $%{y:,.2f}<extra></extra>",
     line=dict(width=3, color=COLOR_TOP)
 ))
-
 fig_ls.add_trace(go.Scatter(
     x=V_sl.index, y=V_sl.values,
     name="Long Bottom / Short Top (Mean Reversion)",
     hovertemplate="%{x|%Y-%m-%d}<br>Long Bottom / Short Top: $%{y:,.2f}<extra></extra>",
     line=dict(width=3, color=COLOR_BOT)
 ))
-
 fig_ls.update_layout(
     title=f"Long–Short vs Short–Long: {group_mode}",
     xaxis_title="Date",
@@ -336,10 +333,9 @@ fig_ls.update_layout(
     hovermode="x unified",
     hoverlabel=dict(namelength=-1)
 )
-
 fig_ls.update_yaxes(tickprefix="$", separatethousands=True)
-
 st.plotly_chart(fig_ls, use_container_width=True)
+
 # ==================== DECILE BAR (ANCHOR-CONSISTENT) ====================
 deciles_full = make_deciles(ranks)
 decile_rows, decile_cum_paths = [], {}
@@ -355,7 +351,6 @@ for d, members_idx in deciles_full.groupby(deciles_full).groups.items():
     decile_cum_paths[int(d)] = (v_ext / INITIAL_INV).rename(f"decile_{int(d)}_wealth")
 
 avg_future = pd.DataFrame(decile_rows).sort_values("decile")
-
 fig2 = px.bar(
     avg_future, x="decile", y="test_total_return",
     title="Compounded Test Return by Formation Decile (Buy & Hold, anchor = $10k)",
@@ -532,14 +527,14 @@ if audit_on:
     audit["longshort_value"]      = V_ls.to_frame(name="V_LS")
     audit["shortlong_value"]      = V_sl.to_frame(name="V_SL")
 
-    # Initial shares (transparency)
+    # Initial shares (transparency) — use same helper logic
     p0_top_a = px_top_ext.iloc[0] if not px_top_ext.empty else pd.Series(dtype=float)
     p0_bot_a = px_bot_ext.iloc[0] if not px_bot_ext.empty else pd.Series(dtype=float)
-    shares_top_long_a = ((INITIAL_INV) / max(1, len(p0_top_a))) / p0_top_a if not p0_top_a.empty else pd.Series(dtype=float)
-    shares_bot_long_a = ((INITIAL_INV) / max(1, len(p0_bot_a))) / p0_bot_a if not p0_bot_a.empty else pd.Series(dtype=float)
-    short_half = INITIAL_INV / 2.0
-    shares_bot_short_a = (short_half / max(1, len(p0_bot_a))) / p0_bot_a if not p0_bot_a.empty else pd.Series(dtype=float)
-    shares_top_short_a = (short_half / max(1, len(p0_top_a))) / p0_top_a if not p0_top_a.empty else pd.Series(dtype=float)
+    shares_top_long_a  = _equal_weight_shares(p0_top_a, INITIAL_INV) if not p0_top_a.empty else pd.Series(dtype=float)
+    shares_bot_long_a  = _equal_weight_shares(p0_bot_a, INITIAL_INV) if not p0_bot_a.empty else pd.Series(dtype=float)
+    short_half         = INITIAL_INV / 2.0
+    shares_bot_short_a = _equal_weight_shares(p0_bot_a, short_half)  if not p0_bot_a.empty else pd.Series(dtype=float)
+    shares_top_short_a = _equal_weight_shares(p0_top_a, short_half)  if not p0_top_a.empty else pd.Series(dtype=float)
 
     audit["buyhold_top_initial_shares"]    = shares_top_long_a.rename("shares_long_per_ticker").to_frame()
     audit["buyhold_bottom_initial_shares"] = shares_bot_long_a.rename("shares_long_per_ticker").to_frame()

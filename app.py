@@ -560,9 +560,8 @@ if audit_on:
     with st.expander(f"bottom_prices_test  —  shape {bot_prices_test.shape}"):
         st.dataframe(preview(bot_prices_test))
 
-    # ---- Audit: buy & hold paths and initial shares ----
-    p0_top = px_top.iloc[0] if not px_top.empty else pd.Series(dtype=float)
-    p0_bot = px_bot.iloc[0] if not px_bot.empty else pd.Series(dtype=float)
+    p0_top = px_top_ext.iloc[0] if not px_top_ext.empty else pd.Series(dtype=float)
+    p0_bot = px_bot_ext.iloc[0] if not px_bot_ext.empty else pd.Series(dtype=float)
     shares_top_long = ((INITIAL_INV) / max(1, len(p0_top))) / p0_top if not p0_top.empty else pd.Series(dtype=float)
     shares_bot_long = ((INITIAL_INV) / max(1, len(p0_bot))) / p0_bot if not p0_bot.empty else pd.Series(dtype=float)
 

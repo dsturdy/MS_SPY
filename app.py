@@ -212,7 +212,7 @@ if len(top) == 0 or len(bot) == 0:
     st.stop()
 
 # ==================== TITLE ====================
-st.title("S&P 500 Constituents: Momentum vs Reversal")
+st.title("S&P 500 Constituents: Momentum vs Mean Reversion")
 st.caption("Data is sourced from CSVs in Github. Formation (in-sample) uses user chosen lookback with a test (out-of-sample) window of: Oct 1, 2024 → Mar 28, 2025")
 st.caption("Created by Dylan Sturdevant for Morgan Stanley exercise")
 

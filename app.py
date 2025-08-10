@@ -122,9 +122,8 @@ def _make_deciles(ranks: pd.Series) -> pd.Series:
     return (np.ceil(ranks * 10)).astype(int).clip(upper=10)
 
 def _cumcurve(rets: pd.Series) -> pd.Series:
-    w = (1 + rets.fillna(0)).cumprod()
-    return w / w.iloc[0]
-
+    return (1 + rets.fillna(0)).cumprod()
+    
 def preview(df: pd.DataFrame, n: int = 2000) -> pd.DataFrame:
     return df.head(n) if len(df) > n else df
 

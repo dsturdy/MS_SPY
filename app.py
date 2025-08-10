@@ -272,48 +272,45 @@ fig_ls.update_layout(
 fig_ls.update_yaxes(tickprefix="$", separatethousands=True)
 st.plotly_chart(fig_ls, use_container_width=True)
 
-# -------------------- DECILE BAR (sum of daily decile returns; no compounding) --------------------
-# Build daily, equal-weight portfolio return for each decile, then SUM across days.
-deciles_full = _make_deciles(ranks)  # Series index=ticker, value in 1..10
+# -------------------- DECILE BAR (compounded per-decile portfolios, like cum curve) --------------------
+# For each decile d, build a DAILY equal-weight portfolio of its members over the test window,
+# then compound across days: (1 + g_d).prod() - 1
+
+deciles_full = _make_deciles(ranks)  # 1..10 per ticker
 
 decile_rows = []
-decile_daily_series = {}  # keep for audit/export
+decile_cum_paths = {}  # keep full wealth paths for audit/zip
 
 for d, members_idx in deciles_full.groupby(deciles_full).groups.items():
-    members = list(members_idx)
-    # require members present in twin (they should be, due to your completeness filter)
-    members = [t for t in members if t in twin.columns]
-    if len(members) == 0:
+    members = [t for t in members_idx if t in twin.columns]
+    if not members:
         continue
 
-    # daily equal-weight (rebalanced) decile return
+    # daily equal-weight return for this decile over the TEST window
     g_d = twin[members].mean(axis=1)
 
-    # arithmetic sum of daily returns across the test window (not compounded)
-    test_sum = float(g_d.sum())
-    avg_daily = float(g_d.mean())
+    # compounded total return over the test window (same as cum curve logic)
+    total_ret = (1.0 + g_d.fillna(0)).prod() - 1.0
 
-    decile_rows.append({
-        "decile": int(d),
-        "test_sum": test_sum,          # what you asked for (∑ daily returns)
-        "avg_daily": avg_daily         # handy to see too
-    })
-    decile_daily_series[int(d)] = g_d
+    # also keep the full cumulative path in case you want to compare curves by decile
+    cum_path = (1.0 + g_d.fillna(0)).cumprod()
+    decile_cum_paths[int(d)] = cum_path.rename(f"decile_{int(d)}_cum")
 
-# Table to plot
+    decile_rows.append({"decile": int(d), "test_total_return": float(total_ret)})
+
 avg_future = pd.DataFrame(decile_rows).sort_values("decile")
 
 fig2 = px.bar(
-    avg_future, x="decile", y="test_sum",
-    title="Sum of Daily Returns by Formation Decile (Uncompounded)",
-    labels={"test_sum": "Σ Daily Return (Test Window)"},
+    avg_future, x="decile", y="test_total_return",
+    title="Compounded Test Return by Formation Decile",
+    labels={"test_total_return": "Total Return (Compounded)"},
     template="plotly_white"
 )
 fig2.update_yaxes(tickformat=".2%")
-ymin, ymax = float(avg_future["test_sum"].min()), float(avg_future["test_sum"].max())
+ymin, ymax = float(avg_future["test_total_return"].min()), float(avg_future["test_total_return"].max())
 pad = max(0.01, 0.12 * (ymax - ymin))
 fig2.update_yaxes(range=[ymin - pad, ymax + pad])
-fig2.update_traces(text=avg_future["test_sum"].map("{:.2%}".format),
+fig2.update_traces(text=avg_future["test_total_return"].map("{:.2%}".format),
                    textposition="outside", cliponaxis=False)
 fig2.update_layout(plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG, margin=dict(t=80, b=60, l=70, r=40))
 st.plotly_chart(fig2, use_container_width=True)

@@ -121,6 +121,18 @@ def buyhold_value(prices: pd.DataFrame, notional: float) -> pd.Series:
     shares = (notional / prices.shape[1]) / p0
     return prices @ shares
 
+def buyhold_shares(prices: pd.DataFrame, notional: float, side: str = "long") -> pd.Series:
+    """
+    Calculate constant shares for buy & hold portfolio allocation.
+    For 'long', shares are positive; for 'short', shares are negative.
+    """
+    if prices.empty or prices.shape[1] == 0:
+        return pd.Series(dtype=float)
+    p0 = prices.iloc[0]
+    shares = (notional / len(p0)) / p0
+    return shares if side == "long" else -shares
+
+
 def series_returns_from_value(V: pd.Series) -> pd.Series:
     return V.pct_change().fillna(0)
 
@@ -221,15 +233,16 @@ px_bot_ext = px_test_all_ext[bot_use]
 
 # ==================== BUY & HOLD (ANCHOR-NORMALIZED) ====================
 # Long-only
-p0_top = px_top_ext.iloc[0]
-p0_bot = px_bot_ext.iloc[0]
-shares_top_long = (INITIAL_INV / len(p0_top)) / p0_top
-shares_bot_long = (INITIAL_INV / len(p0_bot)) / p0_bot
+shares_top = buyhold_shares(px_top_ext, INITIAL_INV, side="long")
+shares_bot = buyhold_shares(px_bot_ext, INITIAL_INV, side="long")
 
-V_top_ext = (px_top_ext @ shares_top_long)
-V_bot_ext = (px_bot_ext @ shares_bot_long)
+
+
+V_top_ext = (px_top_ext @ shares_top)
+V_bot_ext = (px_bot_ext @ shares_bot)
 V_top_ext = V_top_ext / V_top_ext.iloc[0] * INITIAL_INV
 V_bot_ext = V_bot_ext / V_bot_ext.iloc[0] * INITIAL_INV
+
 
 V_top = V_top_ext.loc[TEST_START:]
 V_bot = V_bot_ext.loc[TEST_START:]
@@ -243,29 +256,22 @@ V_spy      = V_spy_ext.loc[TEST_START:]
 # Long–Short & Short–Long (equal half notional per leg)
 half = INITIAL_INV / 2.0
 
-# LS: +Top (half) / -Bottom (half)
-shares_top_long_half = (half / len(p0_top)) / p0_top
-V_long_top_ext       = px_top_ext @ shares_top_long_half
+# ===== Long Top / Short Bottom (Momentum) =====
+shares_top_half = buyhold_shares(px_top_ext, half, side="long")
+shares_bot_half_short = buyhold_shares(px_bot_ext, half, side="short")
 
-shares_bot_short_half = (half / len(p0_bot)) / p0_bot
-pnl_short_bot_ext     = (shares_bot_short_half * (p0_bot - px_bot_ext)).sum(axis=1)
-V_short_bot_ext       = half + pnl_short_bot_ext
-
-V_ls_ext = (V_long_top_ext + V_short_bot_ext)
+V_ls_ext = (px_top_ext @ shares_top_half) + (px_bot_ext @ shares_bot_half_short)
 V_ls_ext = V_ls_ext / V_ls_ext.iloc[0] * INITIAL_INV
-V_ls     = V_ls_ext.loc[TEST_START:]
+V_ls = V_ls_ext.loc[TEST_START:]
 
-# SL: +Bottom (half) / -Top (half)
-shares_bot_long_half = (half / len(p0_bot)) / p0_bot
-V_long_bot_ext       = px_bot_ext @ shares_bot_long_half
+# ===== Long Bottom / Short Top (Mean Reversion) =====
+shares_bot_half = buyhold_shares(px_bot_ext, half, side="long")
+shares_top_half_short = buyhold_shares(px_top_ext, half, side="short")
 
-shares_top_short_half = (half / len(p0_top)) / p0_top
-pnl_short_top_ext     = (shares_top_short_half * (p0_top - px_top_ext)).sum(axis=1)
-V_short_top_ext       = half + pnl_short_top_ext
-
-V_sl_ext = (V_long_bot_ext + V_short_top_ext)
+V_sl_ext = (px_top_ext @ shares_top_half_short) + (px_bot_ext @ shares_bot_half)
 V_sl_ext = V_sl_ext / V_sl_ext.iloc[0] * INITIAL_INV
-V_sl     = V_sl_ext.loc[TEST_START:]
+V_sl = V_sl_ext.loc[TEST_START:]
+
 
 # ==================== CHARTS ====================
 # Long/Bottom/SPY cumulative values
@@ -534,14 +540,15 @@ if audit_on:
     audit["shortlong_value"]      = V_sl.to_frame(name="V_SL")
 
     # Initial shares (transparency)
-    p0_top_a = px_top_ext.iloc[0] if not px_top_ext.empty else pd.Series(dtype=float)
-    p0_bot_a = px_bot_ext.iloc[0] if not px_bot_ext.empty else pd.Series(dtype=float)
-    shares_top_long_a = ((INITIAL_INV) / max(1, len(p0_top_a))) / p0_top_a if not p0_top_a.empty else pd.Series(dtype=float)
-    shares_bot_long_a = ((INITIAL_INV) / max(1, len(p0_bot_a))) / p0_bot_a if not p0_bot_a.empty else pd.Series(dtype=float)
     short_half = INITIAL_INV / 2.0
-    shares_bot_short_a = (short_half / max(1, len(p0_bot_a))) / p0_bot_a if not p0_bot_a.empty else pd.Series(dtype=float)
-    shares_top_short_a = (short_half / max(1, len(p0_top_a))) / p0_top_a if not p0_top_a.empty else pd.Series(dtype=float)
 
+    # Use the same helper function as in main calculations
+    shares_top_long_a  = buyhold_shares(px_top_ext, INITIAL_INV, side="long")
+    shares_bot_long_a  = buyhold_shares(px_bot_ext, INITIAL_INV, side="long")
+    shares_bot_short_a = buyhold_shares(px_bot_ext, short_half, side="short")
+    shares_top_short_a = buyhold_shares(px_top_ext, short_half, side="short")
+
+    # Store them in the audit dict
     audit["buyhold_top_initial_shares"]    = shares_top_long_a.rename("shares_long_per_ticker").to_frame()
     audit["buyhold_bottom_initial_shares"] = shares_bot_long_a.rename("shares_long_per_ticker").to_frame()
     audit["short_bot_initial_shares"]      = shares_bot_short_a.rename("shares_short_per_ticker").to_frame()

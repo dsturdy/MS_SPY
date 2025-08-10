@@ -285,7 +285,7 @@ fig1.update_layout(
 )
 fig1.update_yaxes(tickprefix="$", separatethousands=True)
 # Important: let Plotly print the name; we format the value
-fig1.update_traces(hovertemplate="$%{y:,.2f}<extra></extra>")
+fig1.update_traces(hovertemplate="%{x|%Y-%m-%d}<br>%{name}: $%{y:,.2f}<extra></extra>")
 st.plotly_chart(fig1, use_container_width=True)
 
 # LS vs SL
@@ -303,7 +303,7 @@ fig_ls.update_layout(
     hoverlabel=dict(namelength=-1)
 )
 fig_ls.update_yaxes(tickprefix="$", separatethousands=True)
-fig_ls.update_traces(hovertemplate="$%{y:,.2f}<extra></extra>")
+fig_ls.update_traces(hovertemplate="%{x|%Y-%m-%d}<br>%{name}: $%{y:,.2f}<extra></extra>")
 st.plotly_chart(fig_ls, use_container_width=True)
 
 # ==================== DECILE BAR (ANCHOR-CONSISTENT) ====================

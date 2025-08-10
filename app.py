@@ -156,7 +156,7 @@ with st.sidebar.form("controls"):
     run = st.form_submit_button("Run")
 
 if not run:
-    st.title("Momentum vs Reversal — S&P 500 (Point-in-Time) Q4’24–Q1’25")
+    st.title("Momentum vs Reversal — S&P 500 Q4’24 --> Q1’25")
     st.info("Select your lookback & grouping in the sidebar, then click **Run**.")
     st.stop()
 

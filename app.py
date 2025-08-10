@@ -82,17 +82,18 @@ def max_drawdown(ret: pd.Series) -> float:
 
 def partition_groups(formation: pd.Series, mode: str):
     ranks = formation.rank(pct=True)
-    if mode == "Top 10% vs Bottom 10%":
+    m = (mode or "").lower()
+    if "10%" in m or "decile" in m:
         top = ranks[ranks >= 0.90].index
         bot = ranks[ranks <= 0.10].index
-    elif mode == "Top 25% vs Bottom 25%":
+    elif "25%" in m or "quartile" in m:
         top = ranks[ranks >= 0.75].index
         bot = ranks[ranks <= 0.25].index
     else:  # Half
         med = formation.median()
         top = formation[formation >= med].index
         bot = formation[formation <  med].index
-        if len(top) == 0 or len(bot) == 0:  # fallback if all equal
+        if len(top) == 0 or len(bot) == 0:
             r2 = formation.rank(pct=True, method="average")
             top = r2[r2 >= 0.5].index
             bot = r2[r2 <  0.5].index
@@ -372,9 +373,10 @@ fig2.update_layout(plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG, margin=dict(t=80
 st.plotly_chart(fig2, use_container_width=True)
 
 # ==================== CROSS-SECTION REGRESSION ====================
-if "Decile" in group_mode:
+gm = (group_mode or "").lower()
+if "10%" in gm or "decile" in gm:
     top_name, bot_name = "Top 10%", "Bottom 10%"
-elif "Quartile" in group_mode:
+elif "25%" in gm or "quartile" in gm:
     top_name, bot_name = "Top 25%", "Bottom 25%"
 else:
     top_name, bot_name = "Top 50%", "Bottom 50%"

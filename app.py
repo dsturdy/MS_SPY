@@ -416,8 +416,8 @@ else:
             marker=dict(size=7, opacity=0.8, color=color),
             customdata=np.stack([d["Ticker"].values], axis=-1),
             hovertemplate=("Ticker: %{customdata[0]}<br>"
-                           "Formation Return: %{x:.2%}<br>"
-                           "Test Return: %{y:.2%}<extra></extra>")
+                           "Formation (in-sample) Return: %{x:.2%}<br>"
+                           "Test (out-of-sample) Return: %{y:.2%}<extra></extra>")
         ))
     fig3.update_layout(
         title=f"Cross-Section (Selected Groups Only): {top_name} vs {bot_name}",

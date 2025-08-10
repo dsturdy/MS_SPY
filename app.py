@@ -15,16 +15,8 @@ st.set_page_config(page_title="SPX Momentum vs Reversal (Q4'24–Q1'25)", layout
 st.markdown(
     """
     <style>
-    /* Page background + default text */
-    .stApp {
-        background-color: #f5f6fa;  /* light gray */
-        color: #111;                /* dark text */
-    }
-    /* Sidebar white */
-    section[data-testid="stSidebar"] {
-        background-color: #ffffff;
-    }
-    /* Make headings slightly darker */
+    .stApp { background-color: #f5f6fa; color: #111; }
+    section[data-testid="stSidebar"] { background-color: #ffffff; }
     h1, h2, h3, h4, h5 { color: #111; }
     </style>
     """,
@@ -349,18 +341,15 @@ else:
         line=dict(color="#111", dash="dash"),
         hovertemplate='Formation: %{x:.2%}<br>Ŷ: %{y:.2%}<extra></extra>'
     ))
-    # Group points
     for label, color in [(top_name, COLOR_TOP), (bot_name, COLOR_BOTTOM)]:
         d = df_sel[df_sel["group"] == label]
         fig3.add_trace(go.Scatter(
             x=d["formation"], y=d["test"], mode="markers", name=label,
             marker=dict(size=7, opacity=0.8, color=color),
             customdata=np.stack([d["Ticker"].values], axis=-1),
-            hovertemplate=(
-                "Ticker: %{customdata[0]}<br>"
-                "Formation (In-Sample) Return: %{x:.2%}<br>"
-                "Test (Out-of-Sample) Return: %{y:.2%}<extra></extra>"
-            )
+            hovertemplate=("Ticker: %{customdata[0]}<br>"
+                           "Formation (In-Sample) Return: %{x:.2%}<br>"
+                           "Test (Out-of-Sample) Return: %{y:.2%}<extra></extra>")
         ))
     fig3.update_layout(
         title=f"Cross-Section (Selected Groups Only): {top_name} vs {bot_name}",
@@ -396,75 +385,141 @@ st.dataframe(summary.style.format({
 }))
 st.caption("β>0 & significant (p<0.05) → momentum; β<0 & significant → reversal; else → inconclusive.")
 
-# -------------------- AUDIT MODE (all intermediates + ZIP) --------------------
+# -------------------- AUDIT MODE (dates/prices + group splits + ZIP) --------------------
 if audit_on:
     audit = {}
 
-    # 1) Sources & shapes
-    audit["prices_all (loaded)"] = prices_all
-    audit["rets_all (pct_change)"] = rets_all
-    audit["fwin (formation rets)"] = fwin
-    audit["twin (test rets)"] = twin
+    # ---- Window boundary dates (intended vs used) + boundary prices ----
+    used_formation_start = fwin.index.min() if not fwin.empty else pd.NaT
+    used_formation_end   = fwin.index.max() if not fwin.empty else pd.NaT
+    used_test_start      = twin.index.min() if not twin.empty else pd.NaT
+    used_test_end        = twin.index.max() if not twin.empty else pd.NaT
 
-    # 2) Universe filters
-    keep_mask = fwin_all.notna().all() & twin_all.notna().all()
-    audit["keep_mask (complete both windows)"] = keep_mask.to_frame("keep")
-    audit["kept_cols (index)"] = pd.DataFrame({"ticker": cols})
+    intended_formation_start = (TEST_START - pd.DateOffset(months=LOOKBACK_MONTHS)).normalize()
+    intended_formation_end   = (TEST_START - pd.Timedelta(days=1)).normalize()
+    intended_test_start      = TEST_START.normalize()
+    intended_test_end        = TEST_END.normalize()
 
-    # 3) Formation stats & ranks
-    audit["formation_cumret"] = formation.sort_values(ascending=False).to_frame("formation_cumret")
-    audit["ranks_0to1"] = ranks.to_frame("rank_pct")
-    audit["deciles_1to10"] = _make_deciles(ranks).to_frame("decile")
-
-    # 4) Test stats
-    audit["test_cumret"] = test.sort_values(ascending=False).to_frame("test_cumret")
-
-    # 5) Group membership
-    top_flag = pd.Series(False, index=cols); top_flag.loc[list(top)] = True
-    bot_flag = pd.Series(False, index=cols); bot_flag.loc[list(bot)] = True
-    audit["group_flags"] = pd.DataFrame({"top_grp": top_flag, "bot_grp": bot_flag})
-
-    # 6) In-test daily portfolio series
-    audit["g_top_daily_rets"] = g_top.to_frame("g_top")
-    audit["g_bot_daily_rets"] = g_bot.to_frame("g_bot")
-    audit["ls_daily_rets"] = (g_top - g_bot).to_frame("long_short")
-    audit["sl_daily_rets"] = (g_bot - g_top).to_frame("short_long")
-
-    audit["g_top_cum_curve"] = _cumcurve(g_top).to_frame("g_top_curve")
-    audit["g_bot_cum_curve"] = _cumcurve(g_bot).to_frame("g_bot_curve")
-    audit["ls_cum_curve"]    = _cumcurve(g_top - g_bot).to_frame("ls_curve")
-    audit["sl_cum_curve"]    = _cumcurve(g_bot - g_top).to_frame("sl_curve")
-
-    # 7) SPY aligned + returns used
-    audit["spy_aligned_px"] = spy_aligned.to_frame("SPY_px")
-    audit["spy_daily_rets"] = spy_rets.to_frame("SPY_ret")
-
-    # 8) Regression inputs/outputs (selected groups only)
-    audit["regression_inputs"] = pd.DataFrame({
-        "formation": df_sel.set_index("Ticker")["formation"] if not df_sel.empty else pd.Series(dtype=float),
-        "test": df_sel.set_index("Ticker")["test"] if not df_sel.empty else pd.Series(dtype=float),
-        "group": df_sel.set_index("Ticker")["group"] if not df_sel.empty else pd.Series(dtype=object),
+    window_boundaries = pd.DataFrame({
+        "anchor": ["formation_start","formation_end","test_start","test_end"],
+        "intended_calendar_date": [
+            intended_formation_start, intended_formation_end,
+            intended_test_start, intended_test_end
+        ],
+        "used_trading_date": [
+            used_formation_start, used_formation_end,
+            used_test_start, used_test_end
+        ]
     })
 
-    st.subheader("Audit Tables")
-    for name, df in audit.items():
-        with st.expander(f"{name}  —  shape {getattr(df, 'shape', None)}"):
-            st.dataframe(preview(df if isinstance(df, pd.DataFrame) else pd.DataFrame(df)))
+    price_wide = prices_all[cols]
+    boundary_prices = []
+    for anchor, ts in zip(
+        ["formation_start","formation_end","test_start","test_end"],
+        [used_formation_start, used_formation_end, used_test_start, used_test_end]
+    ):
+        if pd.isna(ts):
+            continue
+        row = price_wide.loc[ts].copy()
+        row.name = anchor
+        boundary_prices.append(row)
 
+    if boundary_prices:
+        boundary_prices = pd.DataFrame(boundary_prices)
+    else:
+        boundary_prices = pd.DataFrame(columns=cols)
+
+    boundary_prices_long = (
+        boundary_prices.reset_index()
+        .melt(id_vars="index", var_name="ticker", value_name="price")
+        .rename(columns={"index":"anchor"})
+    )
+
+    with st.expander(f"window_boundaries  —  shape {window_boundaries.shape}"):
+        st.dataframe(window_boundaries)
+    with st.expander(f"boundary_prices (anchors × tickers)  —  shape {boundary_prices.shape}"):
+        st.dataframe(boundary_prices)
+    with st.expander(f"boundary_prices_long (tidy)  —  shape {boundary_prices_long.shape}"):
+        st.dataframe(boundary_prices_long)
+
+    audit["window_boundaries"] = window_boundaries
+    audit["boundary_prices_wide"] = boundary_prices
+    audit["boundary_prices_long"] = boundary_prices_long
+
+    # ---- Group membership + per-group prices/returns (formation & test) ----
+    deciles_full = _make_deciles(ranks)
+    group_label = pd.Series("Neither", index=cols, dtype=object)
+    group_label.loc[top_use] = "Top"
+    group_label.loc[bot_use] = "Bottom"
+
+    group_membership = pd.DataFrame({
+        "ticker": cols,
+        "rank_pct": ranks.reindex(cols).values,
+        "decile": deciles_full.reindex(cols).values,
+        "formation_cumret": formation.reindex(cols).values,
+        "test_cumret": test.reindex(cols).values,
+        "group": group_label.values
+    }).sort_values(["group","rank_pct"], ascending=[True, False]).reset_index(drop=True)
+
+    price_formation_all = prices_all.loc[fwin.index, cols]
+    price_test_all      = prices_all.loc[twin.index, cols]
+
+    top_prices_formation = price_formation_all[top_use]
+    bot_prices_formation = price_formation_all[bot_use]
+    top_prices_test      = price_test_all[top_use]
+    bot_prices_test      = price_test_all[bot_use]
+
+    ret_formation_all = fwin
+    ret_test_all      = twin
+    top_returns_formation = ret_formation_all[top_use]
+    bot_returns_formation = ret_formation_all[bot_use]
+    top_returns_test      = ret_test_all[top_use]
+    bot_returns_test      = ret_test_all[bot_use]
+
+    with st.expander(f"group_membership  —  shape {group_membership.shape}"):
+        st.dataframe(preview(group_membership, n=2000))
+    with st.expander(f"top_prices_formation  —  shape {top_prices_formation.shape}"):
+        st.dataframe(preview(top_prices_formation))
+    with st.expander(f"bottom_prices_formation  —  shape {bot_prices_formation.shape}"):
+        st.dataframe(preview(bot_prices_formation))
+    with st.expander(f"top_prices_test  —  shape {top_prices_test.shape}"):
+        st.dataframe(preview(top_prices_test))
+    with st.expander(f"bottom_prices_test  —  shape {bot_prices_test.shape}"):
+        st.dataframe(preview(bot_prices_test))
+
+    audit["group_membership"]          = group_membership
+    audit["top_prices_formation"]      = top_prices_formation
+    audit["bottom_prices_formation"]   = bot_prices_formation
+    audit["top_prices_test"]           = top_prices_test
+    audit["bottom_prices_test"]        = bot_prices_test
+    audit["top_returns_formation"]     = top_returns_formation
+    audit["bottom_returns_formation"]  = bot_returns_formation
+    audit["top_returns_test"]          = top_returns_test
+    audit["bottom_returns_test"]       = bot_returns_test
+
+    # (Optional previews of other intermediates — comment out if too chatty)
+    # audit["prices_all (loaded)"] = prices_all
+    # audit["rets_all (pct_change)"] = rets_all
+    # audit["fwin (formation rets)"] = fwin
+    # audit["twin (test rets)"] = twin
+
+    # Include final summary + (optional) OLS summary
+    audit["summary_metrics"] = summary
     if reg is not None:
-        st.subheader("OLS Summary (text)")
-        st.code(reg.summary().as_text())
+        ols_text = reg.summary().as_text()
+    else:
+        ols_text = None
 
+    # ZIP everything
     if offer_downloads:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for name, df in audit.items():
-                fname = name.replace(" ", "_").replace("/", "-") + ".csv"
-                tmp = df if isinstance(df, pd.DataFrame) else pd.DataFrame(df)
-                zf.writestr(fname, tmp.to_csv(index=True))
-            zf.writestr("summary_metrics.csv", summary.to_csv(index=True))
-            if reg is not None:
-                zf.writestr("ols_summary.txt", reg.summary().as_text())
+                if isinstance(df, pd.DataFrame):
+                    fname = name.replace(" ", "_").replace("/", "-") + ".csv"
+                    zf.writestr(fname, df.to_csv(index=True))
+            if ols_text is not None:
+                zf.writestr("ols_summary.txt", ols_text)
         st.download_button(
             "⬇️ Download all audit CSVs (ZIP)",
             data=buf.getvalue(),

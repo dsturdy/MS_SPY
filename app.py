@@ -475,7 +475,7 @@ if audit_on:
     bot_returns_formation = ret_formation_all[bot_use]
     top_returns_test      = ret_test_all[top_use]
     bot_returns_test      = ret_test_all[bot_use]
-
+    
     with st.expander(f"group_membership  —  shape {group_membership.shape}"):
         st.dataframe(preview(group_membership, n=2000))
     with st.expander(f"top_prices_formation  —  shape {top_prices_formation.shape}"):
@@ -488,6 +488,8 @@ if audit_on:
         st.dataframe(preview(bot_prices_test))
 
     audit["group_membership"]          = group_membership
+    audit["top_cum_path"] = _cumcurve(g_top).rename("Top_Cumulative")
+    audit["bottom_cum_path"] = _cumcurve(g_bot).rename("Bottom_Cumulative")
     audit["top_prices_formation"]      = top_prices_formation
     audit["bottom_prices_formation"]   = bot_prices_formation
     audit["top_prices_test"]           = top_prices_test

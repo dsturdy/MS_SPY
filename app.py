@@ -421,7 +421,7 @@ else:
                            "Test (out-of-sample) Return: %{y:.2%}<extra></extra>")
         ))
     fig3.update_layout(
-        title=f"Cross-Section (Selected Groups Only): {top_name} vs {bot_name}",
+        title=f"Cross-Section: {top_name} vs {bot_name}",
         xaxis_title="Formation Return", yaxis_title="Test Return",
         template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG
     )

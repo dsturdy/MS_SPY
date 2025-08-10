@@ -214,8 +214,19 @@ keep = fwin_all.notna().all() & twin_all.notna().all()
 cols = keep.index[keep]
 
 rets = rets_all.loc[:, cols]
-fwin = rets.loc[formation_start:formation_end]
-twin = rets.loc[TEST_START:TEST_END]
+
+fwin = rets.loc[formation_start:formation_end, cols]
+twin = rets.loc[TEST_START:TEST_END, cols]
+
+px_form_all = prices_all.loc[fwin.index, cols]
+px_test_all = prices_all.loc[twin.index, cols]
+
+px_test_all = px_test_all.dropna(axis=1, how="any")    # should already be clean from your keep-filter
+px_test_all = px_test_all.loc[:, (px_test_all.iloc[0] > 0)]
+
+formation_bh = (px_form_all.iloc[-1] / px_form_all.iloc[0] - 1).rename("formation_bh")
+test_bh      = (px_test_all.iloc[-1] / px_test_all.iloc[0] - 1).rename("test_bh")
+
 
 if rets.shape[1] < 50:
     st.warning(f"Only {rets.shape[1]} tickers have complete data in both windows. Results may be noisy.")

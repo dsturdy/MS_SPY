@@ -1,3 +1,4 @@
+# Code I used for downloading constituents' prices to my mac as CSVs so they can be uploaded to github allowing the website to access them without API calls 
 import os
 import pandas as pd
 import yfinance as yf

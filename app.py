@@ -84,9 +84,6 @@ def load_spy_series(start_date: str, end_date: str) -> pd.Series:
         return df[col].rename("SPY")
 
 # -------------------- UTILS --------------------
-def compute_cum(x: pd.Series) -> float:
-    return (1 + x.dropna()).prod() - 1
-
 def max_drawdown(ret: pd.Series) -> float:
     wealth = (1 + ret.fillna(0)).cumprod()
     dd = wealth / wealth.cummax() - 1
@@ -120,9 +117,6 @@ def port_stats(series):
 
 def _make_deciles(ranks: pd.Series) -> pd.Series:
     return (np.ceil(ranks * 10)).astype(int).clip(upper=10)
-
-def _cumcurve(rets: pd.Series) -> pd.Series:
-    return (1 + rets.fillna(0)).cumprod()
 
 def preview(df: pd.DataFrame, n: int = 2000) -> pd.DataFrame:
     return df.head(n) if len(df) > n else df
@@ -221,12 +215,11 @@ twin = rets.loc[TEST_START:TEST_END, cols]
 px_form_all = prices_all.loc[fwin.index, cols]
 px_test_all = prices_all.loc[twin.index, cols]
 
-px_test_all = px_test_all.dropna(axis=1, how="any")    # should already be clean from your keep-filter
+px_test_all = px_test_all.dropna(axis=1, how="any")
 px_test_all = px_test_all.loc[:, (px_test_all.iloc[0] > 0)]
 
 formation_bh = (px_form_all.iloc[-1] / px_form_all.iloc[0] - 1).rename("formation_bh")
 test_bh      = (px_test_all.iloc[-1] / px_test_all.iloc[0] - 1).rename("test_bh")
-
 
 if rets.shape[1] < 50:
     st.warning(f"Only {rets.shape[1]} tickers have complete data in both windows. Results may be noisy.")
@@ -245,7 +238,7 @@ st.caption("Data source: per-ticker CSVs in repo. Formation ranking uses selecte
            "test window is Oct 1, 2024 → Mar 31, 2025.")
 
 # -------------------- BUILD TEST-WINDOW PRICES FOR GROUPS (with anchor day) --------------------
-# Find the anchor day = last trading day before TEST_START, so the first included return is anchor->TEST_START
+# Find the anchor day = last trading day before TEST_START
 idx = prices_all.index.searchsorted(TEST_START)
 anchor_date = prices_all.index[max(0, idx - 1)]
 
@@ -270,10 +263,13 @@ p0_bot = px_bot_ext.iloc[0]
 shares_top_long = (INITIAL_INV / len(p0_top)) / p0_top
 shares_bot_long = (INITIAL_INV / len(p0_bot)) / p0_bot
 
-# Long-only value paths (start at anchor day), then trim to TEST_START
-V_top_ext = px_top_ext @ shares_top_long
-V_bot_ext = px_bot_ext @ shares_bot_long
+# Long-only value paths (start at anchor day), then normalize to EXACTLY 10,000 at anchor
+V_top_ext = (px_top_ext @ shares_top_long)
+V_bot_ext = (px_bot_ext @ shares_bot_long)
+V_top_ext = V_top_ext / V_top_ext.iloc[0] * INITIAL_INV
+V_bot_ext = V_bot_ext / V_bot_ext.iloc[0] * INITIAL_INV
 
+# Trim to TEST_START for plotting and daily-return stats
 V_top = V_top_ext.loc[TEST_START:]
 V_bot = V_bot_ext.loc[TEST_START:]
 
@@ -283,7 +279,39 @@ spy_px_ext = spy_raw.reindex(px_test_all_ext.index).ffill()
 V_spy_ext = (spy_px_ext / spy_px_ext.iloc[0]) * INITIAL_INV
 V_spy = V_spy_ext.loc[TEST_START:]
 
-# Data for the main cumulative chart
+# -------------------- LONG–SHORT & SHORT–LONG — BUY & HOLD (anchor day) --------------------
+half = INITIAL_INV / 2.0
+
+# Long Top (half)
+shares_top_long_half = (half / len(p0_top)) / p0_top
+V_long_top_ext = px_top_ext @ shares_top_long_half
+
+# Short Bottom (half): equity value = initial cash + Σ shares*(p0 - p_t)
+shares_bot_short_half = (half / len(p0_bot)) / p0_bot
+pnl_short_bot_ext = (shares_bot_short_half * (p0_bot - px_bot_ext)).sum(axis=1)
+V_short_bot_ext = half + pnl_short_bot_ext
+
+# LS value path from anchor (already ~10,000 at anchor), trim
+V_ls_ext = V_long_top_ext + V_short_bot_ext
+# Normalize to remove any FP drift
+V_ls_ext = V_ls_ext / V_ls_ext.iloc[0] * INITIAL_INV
+V_ls = V_ls_ext.loc[TEST_START:]
+
+# Long Bottom (half)
+shares_bot_long_half = (half / len(p0_bot)) / p0_bot
+V_long_bot_ext = px_bot_ext @ shares_bot_long_half
+
+# Short Top (half)
+shares_top_short_half = (half / len(p0_top)) / p0_top
+pnl_short_top_ext = (shares_top_short_half * (p0_top - px_top_ext)).sum(axis=1)
+V_short_top_ext = half + pnl_short_top_ext
+
+# SL value path
+V_sl_ext = V_long_bot_ext + V_short_top_ext
+V_sl_ext = V_sl_ext / V_sl_ext.iloc[0] * INITIAL_INV
+V_sl = V_sl_ext.loc[TEST_START:]
+
+# -------------------- MAIN CUMULATIVE CHART --------------------
 cum_df = pd.DataFrame({"Top": V_top, "Bottom": V_bot, "SPY": V_spy}).dropna()
 
 fig1 = go.Figure()
@@ -302,74 +330,52 @@ fig1.update_layout(
 fig1.update_yaxes(tickprefix="$", separatethousands=True)
 st.plotly_chart(fig1, use_container_width=True)
 
-# -------------------- LONG–SHORT & SHORT–LONG — BUY & HOLD (anchor day) --------------------
-half = INITIAL_INV / 2.0
-
-# Long Top (half)
-shares_top_long_half = (half / len(p0_top)) / p0_top
-V_long_top_ext = px_top_ext @ shares_top_long_half
-
-# Short Bottom (half): equity value = initial cash + Σ shares*(p0 - p_t)
-shares_bot_short_half = (half / len(p0_bot)) / p0_bot
-pnl_short_bot_ext = (shares_bot_short_half * (p0_bot - px_bot_ext)).sum(axis=1)
-V_short_bot_ext = half + pnl_short_bot_ext
-
-# LS value path from anchor, then trim
-V_ls = (V_long_top_ext + V_short_bot_ext).loc[TEST_START:]
-
-# Long Bottom (half)
-shares_bot_long_half = (half / len(p0_bot)) / p0_bot
-V_long_bot_ext = px_bot_ext @ shares_bot_long_half
-
-# Short Top (half)
-shares_top_short_half = (half / len(p0_top)) / p0_top
-pnl_short_top_ext = (shares_top_short_half * (p0_top - px_top_ext)).sum(axis=1)
-V_short_top_ext = half + pnl_short_top_ext
-
-# SL value path trimmed
-V_sl = (V_long_bot_ext + V_short_top_ext).loc[TEST_START:]
-
-fig_ls = go.Figure()
-fig_ls.add_trace(go.Scatter(x=V_ls.index, y=V_ls.values, name="Long Top / Short Bottom",
-                            line=dict(width=3, color=COLOR_TOP)))
-fig_ls.add_trace(go.Scatter(x=V_sl.index, y=V_sl.values, name="Long Bottom / Short Top",
-                            line=dict(width=3, color=COLOR_BOTTOM)))
-fig_ls.update_layout(
-    title=f"Long–Short vs Short–Long — Buy & Hold ({group_mode})",
-    xaxis_title="Date", yaxis_title="Portfolio Value ($)",
-    template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG
+# -------------------- VALUES TABLE + CSV (for Excel cross-checks) --------------------
+values_df = pd.DataFrame({
+    "V_top": V_top,
+    "V_bot": V_bot,
+    "V_spy": V_spy,
+    "V_ls": V_ls,
+    "V_sl": V_sl
+}).dropna(how="all")
+st.subheader("Daily Portfolio Values (Test Window)")
+st.dataframe(values_df.style.format("{:.2f}"))
+st.download_button(
+    "⬇️ Download Portfolio Values CSV",
+    data=values_df.to_csv(index=True).encode("utf-8"),
+    file_name="portfolio_values.csv",
+    mime="text/csv"
 )
-fig_ls.update_yaxes(tickprefix="$", separatethousands=True)
-st.plotly_chart(fig_ls, use_container_width=True)
 
-# -------------------- DECILE BAR (compounded from buy&hold value paths) --------------------
+# -------------------- DECILE BAR (anchor-consistent) --------------------
 deciles_full = _make_deciles(ranks)  # 1..10 per ticker
-
-decile_rows = []
-decile_cum_paths = {}
+decile_rows, decile_cum_paths = [], {}
 
 for d, members_idx in deciles_full.groupby(deciles_full).groups.items():
-    members = [t for t in members_idx if t in px_test_all.columns]
+    members = [t for t in members_idx if t in px_test_all_ext.columns]
     if not members:
         continue
-    V_dec = buyhold_value(px_test_all[members], INITIAL_INV)
-    total_ret = V_dec.iloc[-1] / V_dec.iloc[0] - 1.0
-    decile_rows.append({"decile": int(d), "test_total_return": float(total_ret)})
-    decile_cum_paths[int(d)] = (V_dec / V_dec.iloc[0]).rename(f"decile_{int(d)}_wealth")
+    V_dec_ext = buyhold_value(px_test_all_ext[members], INITIAL_INV)
+    # Normalize to exact 10k at anchor (defensive)
+    V_dec_ext = V_dec_ext / V_dec_ext.iloc[0] * INITIAL_INV
+    total_ret_anchor = V_dec_ext.iloc[-1] / INITIAL_INV - 1.0
+    decile_rows.append({"decile": int(d), "test_total_return": float(total_ret_anchor)})
+    decile_cum_paths[int(d)] = (V_dec_ext / INITIAL_INV).rename(f"decile_{int(d)}_wealth")
 
 avg_future = pd.DataFrame(decile_rows).sort_values("decile")
 
 fig2 = px.bar(
     avg_future, x="decile", y="test_total_return",
-    title="Compounded Test Return by Formation Decile (Buy & Hold)",
+    title="Compounded Test Return by Formation Decile (Buy & Hold, anchor = $10k)",
     labels={"test_total_return": "Total Return"},
     template="plotly_white"
 )
 fig2.update_yaxes(tickformat=".2%")
-ymin, ymax = float(avg_future["test_total_return"].min()), float(avg_future["test_total_return"].max())
-pad = max(0.01, 0.12 * (ymax - ymin))
-fig2.update_yaxes(range=[ymin - pad, ymax + pad])
-fig2.update_traces(text=avg_future["test_total_return"].map("{:.2%}".format),
+if not avg_future.empty:
+    ymin, ymax = float(avg_future["test_total_return"].min()), float(avg_future["test_total_return"].max())
+    pad = max(0.01, 0.12 * (ymax - ymin))
+    fig2.update_yaxes(range=[ymin - pad, ymax + pad])
+fig2.update_traces(text=avg_future["test_total_return"].map("{:.2%}".format) if not avg_future.empty else None,
                    textposition="outside", cliponaxis=False)
 fig2.update_layout(plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG, margin=dict(t=80, b=60, l=70, r=40))
 st.plotly_chart(fig2, use_container_width=True)
@@ -445,20 +451,21 @@ else:
     st.plotly_chart(fig3, use_container_width=True)
 
 # -------------------- SUMMARY TABLE — BUY & HOLD --------------------
+# Use daily returns over TEST window for vol/sharpe/mdd, but use ANCHOR value for cumulative.
 ret_top = series_returns_from_value(V_top)
 ret_bot = series_returns_from_value(V_bot)
 ret_ls  = series_returns_from_value(V_ls)
 ret_sl  = series_returns_from_value(V_sl)
 
-def _stats_from_rets(s):
-    ann_vol, sharpe, mdd = port_stats(s.dropna())
-    cum = (1 + s).prod() - 1
-    return cum, ann_vol, sharpe, mdd
+def _stats_from_series(V_ext, ret_series):
+    ann_vol, sharpe, mdd = port_stats(ret_series.dropna())
+    cum_anchor = V_ext.iloc[-1] / INITIAL_INV - 1.0  # end / 10k - 1
+    return cum_anchor, ann_vol, sharpe, mdd
 
-cum_top, av_top, sh_top, dd_top = _stats_from_rets(ret_top)
-cum_bot, av_bot, sh_bot, dd_bot = _stats_from_rets(ret_bot)
-cum_ls,  av_ls,  sh_ls,  dd_ls  = _stats_from_rets(ret_ls)
-cum_sl,  av_sl,  sh_sl,  dd_sl  = _stats_from_rets(ret_sl)
+cum_top, av_top, sh_top, dd_top = _stats_from_series(V_top_ext, ret_top)
+cum_bot, av_bot, sh_bot, dd_bot = _stats_from_series(V_bot_ext, ret_bot)
+cum_ls,  av_ls,  sh_ls,  dd_ls  = _stats_from_series(V_ls_ext,  ret_ls)
+cum_sl,  av_sl,  sh_sl,  dd_sl  = _stats_from_series(V_sl_ext,  ret_sl)
 
 summary = pd.DataFrame([
     ["Top (Buy&Hold)",         cum_top, av_top, sh_top, dd_top],
@@ -560,11 +567,11 @@ if audit_on:
     with st.expander(f"bottom_prices_test  —  shape {bot_prices_test.shape}"):
         st.dataframe(preview(bot_prices_test))
 
+    # Initial shares (for transparency)
     p0_top = px_top_ext.iloc[0] if not px_top_ext.empty else pd.Series(dtype=float)
     p0_bot = px_bot_ext.iloc[0] if not px_bot_ext.empty else pd.Series(dtype=float)
     shares_top_long = ((INITIAL_INV) / max(1, len(p0_top))) / p0_top if not p0_top.empty else pd.Series(dtype=float)
     shares_bot_long = ((INITIAL_INV) / max(1, len(p0_bot))) / p0_bot if not p0_bot.empty else pd.Series(dtype=float)
-
     short_half = INITIAL_INV / 2.0
     shares_bot_short = (short_half / max(1, len(p0_bot))) / p0_bot if not p0_bot.empty else pd.Series(dtype=float)
     shares_top_short = (short_half / max(1, len(p0_top))) / p0_top if not p0_top.empty else pd.Series(dtype=float)
@@ -574,10 +581,10 @@ if audit_on:
     audit["buyhold_bottom_value"]      = V_bot.to_frame(name="V_bottom")
     audit["longshort_value"]           = V_ls.to_frame(name="V_LS")
     audit["shortlong_value"]           = V_sl.to_frame(name="V_SL")
-    audit["buyhold_top_initial_shares"] = shares_top_long.rename("shares_long_per_ticker").to_frame()
+    audit["buyhold_top_initial_shares"]    = shares_top_long.rename("shares_long_per_ticker").to_frame()
     audit["buyhold_bottom_initial_shares"] = shares_bot_long.rename("shares_long_per_ticker").to_frame()
-    audit["short_bot_initial_shares"]  = shares_bot_short.rename("shares_short_per_ticker").to_frame()
-    audit["short_top_initial_shares"]  = shares_top_short.rename("shares_short_per_ticker").to_frame()
+    audit["short_bot_initial_shares"]      = shares_bot_short.rename("shares_short_per_ticker").to_frame()
+    audit["short_top_initial_shares"]      = shares_top_short.rename("shares_short_per_ticker").to_frame()
 
     audit["top_prices_formation"]      = top_prices_formation
     audit["bottom_prices_formation"]   = bot_prices_formation

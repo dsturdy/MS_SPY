@@ -488,8 +488,8 @@ if audit_on:
         st.dataframe(preview(bot_prices_test))
 
     audit["group_membership"]          = group_membership
-    audit["top_cum_path"] = _cumcurve(g_top).rename("Top_Cumulative")
-    audit["bottom_cum_path"] = _cumcurve(g_bot).rename("Bottom_Cumulative")
+    audit["top_cum_path"] = _cumcurve(g_top).rename("Top_Cumulative").to_frame()
+    audit["bottom_cum_path"] = _cumcurve(g_bot).rename("Bottom_Cumulative").to_frame()
     audit["top_prices_formation"]      = top_prices_formation
     audit["bottom_prices_formation"]   = bot_prices_formation
     audit["top_prices_test"]           = top_prices_test

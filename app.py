@@ -407,7 +407,7 @@ else:
         x=xgrid, y=pred["mean"], mode="lines",
         name=f"Fit β={beta:.2f} (t={tval:.2f}, p={pval:.3g})",
         line=dict(color="#111", dash="dash"),
-        hovertemplate='Formation: %{x:.2%}<br>Ŷ: %{y:.2%}<extra></extra>'
+        hovertemplate='Formation (in-sample) Return: %{x:.2%}<br>Test (out-of-sample) Return: %{y:.2%}<extra></extra>'
     ))
     for label, color in [(top_name, COLOR_TOP), (bot_name, COLOR_BOT)]:
         d = df_sel[df_sel["group"] == label]

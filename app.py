@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 import yfinance as yf
 
 # ==================== THEME / UI ====================
-st.set_page_config(page_title="SPX Momentum vs Reversal (Q4'24–Q1'25)", layout="wide")
+st.set_page_config(page_title="S&P 500 Constituents: Momentum vs Mean Reversion", layout="wide")
 st.markdown(
     """
     <style>

@@ -3,8 +3,8 @@ import os
 import pandas as pd
 import yfinance as yf
 
-# Setting up the config
-DATA_DIR = "data"  # folder where CSV will be saved
+# Setting up the config (with an example output directory) 
+DATA_DIR = "data" 
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # Wikipedia has the S&P constituents circa Oct 26, 2024
@@ -14,7 +14,7 @@ WIKI_REV_URL = "https://en.wikipedia.org/w/index.php?title=List_of_S%26P_500_com
 START_DATE = "2023-07-01"
 END_DATE   = "2025-03-31"
 
-# Creating functions to download
+# Creating functions to download 
 def get_sp500_tickers():
     df = pd.read_html(WIKI_REV_URL, header=0)[0]
     tickers = df["Symbol"].str.replace(".", "-", regex=False).tolist()
@@ -39,7 +39,7 @@ def download_prices(tickers):
     prices.index.name = "Date"
     return prices
 
-# main function, also want all tickers as their own csv so we can upload folder to gitub so our app can access it
+# main
 if __name__ == "__main__":
     tickers = get_sp500_tickers()
     prices = download_prices(tickers)

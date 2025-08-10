@@ -1,4 +1,4 @@
-# app.py — S&P 500 Constituents: Momentum vs Mean Reversion (lean)
+# app.py — S&P 500 Constituents: Momentum vs Mean Reversion
 import os
 import numpy as np
 import pandas as pd
@@ -8,7 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import yfinance as yf
 
-# ================ UI / THEME ================
+# Picking colors and setting up the layout for UI 
 st.set_page_config(page_title="S&P 500 Constituents: Momentum vs Mean Reversion", layout="wide")
 st.markdown("""
 <style>
@@ -21,13 +21,13 @@ st.markdown("""
 PLOT_BG = "#ffffff"
 COLOR_TOP, COLOR_BOT, COLOR_SPY = "#1f77b4", "#d62728", "#111111"
 
-# ================ CONFIG ================
+# Config
 PRICES_DIR  = "Necessary_CSVs"  # CSVs: Date, AdjClose (or Close)
 TEST_START  = pd.Timestamp("2024-10-01")
 TEST_END    = pd.Timestamp("2025-03-31")
 INITIAL_INV = 10_000
 
-# ================ LOADERS ================
+# Loading the CSVs
 @st.cache_data(show_spinner=False)
 def list_available_tickers() -> list[str]:
     files = [f for f in os.listdir(PRICES_DIR) if f.endswith(".csv")]
@@ -47,7 +47,7 @@ def load_prices_from_folder(tickers: list[str]) -> pd.DataFrame:
     out = pd.concat(frames, axis=1).sort_index()
     out.index.name = "Date"
     return out
-
+# Offsetting start/end dates for holidays/non-trading days
 @st.cache_data(show_spinner=False)
 def load_spy_series(start_date: str, end_date: str) -> pd.Series:
     local = os.path.join(PRICES_DIR, "SPY.csv")
@@ -62,7 +62,7 @@ def load_spy_series(start_date: str, end_date: str) -> pd.Series:
     col = "Adj Close" if "Adj Close" in df.columns else "Close"
     return df[col].rename("SPY")
 
-# ================ UTILS ================
+# Setting up definitions for filtering/
 def partition_groups(formation: pd.Series, mode: str):
     ranks = formation.rank(pct=True)
     m = (mode or "").lower()
@@ -80,12 +80,14 @@ def partition_groups(formation: pd.Series, mode: str):
 
 def make_deciles(ranks: pd.Series) -> pd.Series:
     return (np.ceil(ranks * 10)).astype(int).clip(upper=10)
-
+  
+# Buy fixed shares (equal weighting) and hold portfolio for cumulative returns
 def buyhold_value(prices: pd.DataFrame, notional: float) -> pd.Series:
     if prices.empty: return pd.Series(dtype=float)
     p0 = prices.iloc[0]; shares = (notional / prices.shape[1]) / p0
     return prices @ shares
 
+# Calculating stats for summary window 
 def port_stats(series: pd.Series):
     series = series.dropna()
     if series.empty: return np.nan, np.nan, np.nan
@@ -96,7 +98,7 @@ def port_stats(series: pd.Series):
     mdd = (wealth / wealth.cummax() - 1).min()
     return ann_vol, sharpe, mdd
 
-# Fixed-shares helpers
+# Helper functions for calculating returns of Long-Short/Short-Long portfolios 
 def _equal_weight_shares(p0: pd.Series, notional: float) -> pd.Series:
     return (notional / len(p0)) / p0
 
@@ -108,7 +110,7 @@ def _short_leg_value(px_ext: pd.DataFrame, p0: pd.Series, notional: float) -> pd
     pnl = (sh * (p0 - px_ext)).sum(axis=1)
     return notional + pnl
 
-# ================ SIDEBAR ================
+# Creating a sidebar with dropdowns 
 with st.sidebar.form("controls"):
     st.header("Parameters")
     choice = st.selectbox("Formation lookback", ["1 month", "3 months", "6 months", "12 months"], index=1)
@@ -126,7 +128,7 @@ formation_start = TEST_START - pd.DateOffset(months=LOOKBACK_MONTHS)
 st.sidebar.write(f"In-sample: **{formation_start.date()} → {formation_end.date()}**")
 st.sidebar.write(f"Out-of-sample: **{TEST_START.date()} → {TEST_END.date()}**")
 
-# ================ LOAD & FILTER ================
+# Loading Non-SPY tickers/data and filtering them 
 all_files = list_available_tickers()
 if not all_files: st.error(f"No CSVs in `{PRICES_DIR}/`."); st.stop()
 
@@ -134,6 +136,7 @@ tickers = [t for t in all_files if t != "SPY"]
 prices_all = load_prices_from_folder(tickers)
 if prices_all.empty: st.error("Failed to load any prices from CSVs."); st.stop()
 
+# Need to calculate returns for filtering into decile/quartiles/etc and dropping tickers missing data
 rets_all = prices_all.pct_change()
 fwin_all = rets_all.loc[formation_start:formation_end]
 twin_all = rets_all.loc[TEST_START:TEST_END]
@@ -144,7 +147,7 @@ cols = keep.index[keep]
 if len(cols) == 0: st.error("No tickers with complete data in both windows."); st.stop()
 if len(cols) < 50: st.warning(f"Only {len(cols)} tickers have complete data. Results may be noisy.")
 
-# Formation/Test returns (buy & hold over the window)
+# Ranking the tickers and buy-and-hold over the test window
 px_form_all = prices_all.loc[fwin_all.index, cols]
 px_test_all = prices_all.loc[twin_all.index, cols].dropna(axis=1, how="any")
 px_test_all = px_test_all.loc[:, (px_test_all.iloc[0] > 0)]
@@ -153,12 +156,13 @@ test      = (px_test_all.iloc[-1] / px_test_all.iloc[0] - 1)
 
 top, bot, ranks = partition_groups(formation, group_mode)
 
-# ================ TITLE ================
+# The title 
 st.title("S&P 500 Constituents: Momentum vs Mean Reversion")
 st.caption("Formation (in-sample) uses your lookback; test (out-of-sample) is Oct 1, 2024 → Mar 28, 2025.")
 st.caption("Created by Dylan Sturdevant for Morgan Stanley exercise")
 
-# ================ ANCHOR & GROUP PRICES ================
+# Anchor the test window at the last trading day on or before TEST_START so we have a valid
+# Build an extended panel from anchor_date..TEST_END, intersect with the ranked top/bottom
 idx = prices_all.index.searchsorted(TEST_START)
 anchor_date = prices_all.index[max(0, idx - 1)]
 px_test_all_ext = prices_all.loc[anchor_date:TEST_END, cols]
@@ -171,17 +175,18 @@ px_top_ext = px_test_all_ext[top_use]
 px_bot_ext = px_test_all_ext[bot_use]
 p0_top, p0_bot = px_top_ext.iloc[0], px_bot_ext.iloc[0]
 
-# ================ BUY & HOLD (normalized to $10k) ================
+# Building the buy and hold equity curves and renormalizing the start value to 10k 
 V_top_ext = buyhold_value(px_top_ext, INITIAL_INV); V_top_ext = V_top_ext / V_top_ext.iloc[0] * INITIAL_INV
 V_bot_ext = buyhold_value(px_bot_ext, INITIAL_INV); V_bot_ext = V_bot_ext / V_bot_ext.iloc[0] * INITIAL_INV
 V_top = V_top_ext.loc[TEST_START:]; V_bot = V_bot_ext.loc[TEST_START:]
 
+# Need to plot it against SPY for comparison
 spy_raw = load_spy_series(anchor_date.strftime("%Y-%m-%d"), TEST_END.strftime("%Y-%m-%d"))
 spy_px_ext = spy_raw.reindex(px_test_all_ext.index).ffill()
 V_spy_ext = (spy_px_ext / spy_px_ext.iloc[0]) * INITIAL_INV
 V_spy = V_spy_ext.loc[TEST_START:]
 
-# ================ LONG–SHORT / SHORT–LONG (fixed shares, no rebal) ================
+# Same thing for a long the outperformers and short the underperformers portfolio and vice versa (long underperformers, short outperformers) 
 half = INITIAL_INV / 2.0
 V_ls_ext = _long_leg_value(px_top_ext, p0_top, half) + _short_leg_value(px_bot_ext, p0_bot, half)
 V_sl_ext = _long_leg_value(px_bot_ext, p0_bot, half) + _short_leg_value(px_top_ext, p0_top, half)
@@ -189,8 +194,8 @@ V_ls_ext = V_ls_ext / V_ls_ext.iloc[0] * INITIAL_INV
 V_sl_ext = V_sl_ext / V_sl_ext.iloc[0] * INITIAL_INV
 V_ls, V_sl = V_ls_ext.loc[TEST_START:], V_sl_ext.loc[TEST_START:]
 
-# ================ CHARTS ================
-# B&H Top/Bottom/SPY
+# Setting up all of the charts using plotly for interactability 
+# Cumulative return for out, under, and SPY 
 cum_df = pd.DataFrame({"Top": V_top, "Bottom": V_bot, "SPY": V_spy}).dropna(how="all")
 fig1 = go.Figure()
 for name, color in [("Top", COLOR_TOP), ("Bottom", COLOR_BOT), ("SPY", COLOR_SPY)]:
@@ -208,7 +213,7 @@ fig1.update_layout(
 fig1.update_yaxes(tickprefix="$", separatethousands=True)
 st.plotly_chart(fig1, use_container_width=True)
 
-# LS vs SL
+# Now Long-Short vs Short-Long
 fig_ls = go.Figure()
 fig_ls.add_trace(go.Scatter(x=V_ls.index, y=V_ls.values, name="Long Top / Short Bottom (Momentum)",
                             hovertemplate="%{x|%Y-%m-%d}<br>LS: $%{y:,.2f}<extra></extra>",
@@ -225,7 +230,7 @@ fig_ls.update_layout(
 fig_ls.update_yaxes(tickprefix="$", separatethousands=True)
 st.plotly_chart(fig_ls, use_container_width=True)
 
-# Decile bar (OOS)
+# Making a bar graph so you can see cumulative return by decile (trying to show there's no pattern) 
 deciles_full = make_deciles(ranks)
 rows = []
 for d, members_idx in deciles_full.groupby(deciles_full).groups.items():
@@ -248,7 +253,7 @@ if not avg_future.empty:
 fig2.update_layout(plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG, margin=dict(t=80, b=60, l=70, r=40))
 st.plotly_chart(fig2, use_container_width=True)
 
-# ================ CROSS-SECTION REGRESSION ================
+# Creating a cross-section regression and later a scatterplot so we can see beta, t-stat, and p-value 
 gm = (group_mode or "").lower()
 if "10%" in gm or "decile" in gm:  top_name, bot_name = "Top 10%", "Bottom 10%"
 elif "25%" in gm or "quartile" in gm: top_name, bot_name = "Top 25%", "Bottom 25%"
@@ -308,7 +313,7 @@ else:
     fig3.update_xaxes(tickformat=".2%"); fig3.update_yaxes(tickformat=".2%")
     st.plotly_chart(fig3, use_container_width=True)
 
-# ================ SUMMARY ================
+# Now making a summary window to display some other stats (e.g. CAGR, vol, sharpe, drawdowns) 
 def _stats_from_series(V_ext: pd.Series, V: pd.Series):
     ret = V.pct_change().fillna(0)
     av, sh, mdd = port_stats(ret)

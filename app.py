@@ -279,6 +279,9 @@ fig1.update_layout(
     template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG
 )
 fig1.update_yaxes(tickprefix="$", separatethousands=True)
+fig1.update_traces(
+    hovertemplate='%{x|%Y-%m-%d}<br>%{name}: $%{y:,.2f}<extra></extra>'
+)
 st.plotly_chart(fig1, use_container_width=True)
 
 # LS vs SL
@@ -291,6 +294,10 @@ fig_ls.update_layout(
     template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG
 )
 fig_ls.update_yaxes(tickprefix="$", separatethousands=True)
+
+fig_ls.update_traces(
+    hovertemplate='%{x|%Y-%m-%d}<br>%{name}: $%{y:,.2f}<extra></extra>'
+)
 st.plotly_chart(fig_ls, use_container_width=True)
 
 # ==================== DECILE BAR (ANCHOR-CONSISTENT) ====================

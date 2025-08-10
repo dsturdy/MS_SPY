@@ -269,17 +269,29 @@ V_sl     = V_sl_ext.loc[TEST_START:]
 cum_df = pd.DataFrame({"Top": V_top, "Bottom": V_bot, "SPY": V_spy}).dropna(how="all")
 
 fig1 = go.Figure()
-fig1.add_trace(go.Scatter(x=cum_df.index, y=cum_df["Top"],    name="Top",    line=dict(width=3, color=COLOR_TOP)))
-fig1.add_trace(go.Scatter(x=cum_df.index, y=cum_df["Bottom"], name="Bottom", line=dict(width=3, color=COLOR_BOT)))
-fig1.add_trace(go.Scatter(x=cum_df.index, y=cum_df["SPY"],    name="SPY",    line=dict(width=2, color=COLOR_SPY, dash="dot")))
+
+ht = "%{meta}: $%{y:,.2f}<extra></extra>"
+
+fig1.add_trace(go.Scatter(
+    x=cum_df.index, y=cum_df["Top"],
+    name="Top", meta="Top",
+    line=dict(width=3, color=COLOR_TOP),
+    hovertemplate=ht
+))
+fig1.add_trace(go.Scatter(
+    x=cum_df.index, y=cum_df["Bottom"],
+    name="Bottom", meta="Bottom",
+    line=dict(width=3, color=COLOR_BOT),
+    hovertemplate=ht
+))
+fig1.add_trace(go.Scatter(
+    x=cum_df.index, y=cum_df["SPY"],
+    name="SPY", meta="SPY",
+    line=dict(width=2, color=COLOR_SPY, dash="dot"),
+    hovertemplate=ht
+))
+
 fig1.update_layout(
-    title=f"Cumulative Portfolio Value — Buy & Hold ({group_mode})  "
-          f"(Formation {formation_start.date()} → {formation_end.date()})",
-    xaxis_title="Date",
-    yaxis_title="Portfolio Value ($)",
-    template="plotly_white",
-    plot_bgcolor=PLOT_BG,
-    paper_bgcolor=PLOT_BG,
     hovermode="x unified",
     hoverlabel=dict(namelength=-1)
 )

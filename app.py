@@ -82,10 +82,10 @@ def max_drawdown(ret: pd.Series) -> float:
 
 def partition_groups(formation: pd.Series, mode: str):
     ranks = formation.rank(pct=True)
-    if mode == "Decile (Top 10% vs Bottom 10%)":
+    if mode == "Top 10% vs Bottom 10%":
         top = ranks[ranks >= 0.90].index
         bot = ranks[ranks <= 0.10].index
-    elif mode == "Quartile (Top 25% vs Bottom 25%)":
+    elif mode == "Top 25% vs Bottom 25%":
         top = ranks[ranks >= 0.75].index
         bot = ranks[ranks <= 0.25].index
     else:  # Half

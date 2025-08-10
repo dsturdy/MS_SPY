@@ -324,7 +324,8 @@ fig_ls.add_trace(go.Scatter(
     line=dict(width=3, color=COLOR_BOT)
 ))
 fig_ls.update_layout(
-    title=f"Long–Short vs Short–Long: {group_mode}",
+    title=f"Long–Short vs Short–Long: {group_mode}"
+        f"(in-sample {formation_start.date()} → {formation_end.date()})",
     xaxis_title="Date",
     yaxis_title="Portfolio Value ($)",
     template="plotly_white",

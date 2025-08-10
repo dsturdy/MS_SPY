@@ -244,27 +244,46 @@ st.title("Momentum vs Reversal — S&P 500 (Point-in-Time) Q4’24–Q1’25")
 st.caption("Data source: per-ticker CSVs in repo. Formation ranking uses selected lookback; "
            "test window is Oct 1, 2024 → Mar 31, 2025.")
 
-# -------------------- BUILD TEST-WINDOW PRICES FOR GROUPS --------------------
-px_test_all = prices_all.loc[twin.index, cols]
-avail = set(px_test_all.columns)
+# -------------------- BUILD TEST-WINDOW PRICES FOR GROUPS (with anchor day) --------------------
+# Find the anchor day = last trading day before TEST_START, so the first included return is anchor->TEST_START
+idx = prices_all.index.searchsorted(TEST_START)
+anchor_date = prices_all.index[max(0, idx - 1)]
+
+# Extended test window: start from anchor day, then trim to TEST_START for plotting/metrics
+px_test_all_ext = prices_all.loc[anchor_date:TEST_END, cols]
+
+# Decide group membership first
+avail = set(px_test_all_ext.columns)
 top_use = [t for t in list(top) if t in avail]
 bot_use = [t for t in list(bot) if t in avail]
 if len(top_use) == 0 or len(bot_use) == 0:
     st.error("Selected groups are empty after the coverage filter.")
     st.stop()
 
-px_top = px_test_all[top_use]
-px_bot = px_test_all[bot_use]
+px_top_ext = px_test_all_ext[top_use]
+px_bot_ext = px_test_all_ext[bot_use]
 
-# -------------------- CUMULATIVE (Top/Bottom/SPY) — BUY & HOLD --------------------
-V_top = buyhold_value(px_top, INITIAL_INV)
-V_bot = buyhold_value(px_bot, INITIAL_INV)
+# -------------------- CUMULATIVE (Top/Bottom/SPY) — BUY & HOLD with anchor day --------------------
+# Compute shares using anchor day prices (no daily rebalancing)
+p0_top = px_top_ext.iloc[0]
+p0_bot = px_bot_ext.iloc[0]
+shares_top_long = (INITIAL_INV / len(p0_top)) / p0_top
+shares_bot_long = (INITIAL_INV / len(p0_bot)) / p0_bot
 
-spy_raw = load_spy_series(px_test_all.index.min().strftime("%Y-%m-%d"),
-                          px_test_all.index.max().strftime("%Y-%m-%d"))
-spy_px = spy_raw.reindex(px_test_all.index).ffill()
-V_spy = (spy_px / spy_px.iloc[0]) * INITIAL_INV
+# Long-only value paths (start at anchor day), then trim to TEST_START
+V_top_ext = px_top_ext @ shares_top_long
+V_bot_ext = px_bot_ext @ shares_bot_long
 
+V_top = V_top_ext.loc[TEST_START:]
+V_bot = V_bot_ext.loc[TEST_START:]
+
+# SPY with the same anchor logic
+spy_raw = load_spy_series(anchor_date.strftime("%Y-%m-%d"), TEST_END.strftime("%Y-%m-%d"))
+spy_px_ext = spy_raw.reindex(px_test_all_ext.index).ffill()
+V_spy_ext = (spy_px_ext / spy_px_ext.iloc[0]) * INITIAL_INV
+V_spy = V_spy_ext.loc[TEST_START:]
+
+# Data for the main cumulative chart
 cum_df = pd.DataFrame({"Top": V_top, "Bottom": V_bot, "SPY": V_spy}).dropna()
 
 fig1 = go.Figure()
@@ -283,15 +302,32 @@ fig1.update_layout(
 fig1.update_yaxes(tickprefix="$", separatethousands=True)
 st.plotly_chart(fig1, use_container_width=True)
 
-# -------------------- LONG–SHORT & SHORT–LONG — BUY & HOLD --------------------
+# -------------------- LONG–SHORT & SHORT–LONG — BUY & HOLD (anchor day) --------------------
 half = INITIAL_INV / 2.0
-V_long_top   = buyhold_value(px_top, half)
-V_short_bot  = short_value(px_bot, half)
-V_ls         = (V_long_top + V_short_bot)
 
-V_long_bot   = buyhold_value(px_bot, half)
-V_short_top  = short_value(px_top, half)
-V_sl         = (V_long_bot + V_short_top)
+# Long Top (half)
+shares_top_long_half = (half / len(p0_top)) / p0_top
+V_long_top_ext = px_top_ext @ shares_top_long_half
+
+# Short Bottom (half): equity value = initial cash + Σ shares*(p0 - p_t)
+shares_bot_short_half = (half / len(p0_bot)) / p0_bot
+pnl_short_bot_ext = (shares_bot_short_half * (p0_bot - px_bot_ext)).sum(axis=1)
+V_short_bot_ext = half + pnl_short_bot_ext
+
+# LS value path from anchor, then trim
+V_ls = (V_long_top_ext + V_short_bot_ext).loc[TEST_START:]
+
+# Long Bottom (half)
+shares_bot_long_half = (half / len(p0_bot)) / p0_bot
+V_long_bot_ext = px_bot_ext @ shares_bot_long_half
+
+# Short Top (half)
+shares_top_short_half = (half / len(p0_top)) / p0_top
+pnl_short_top_ext = (shares_top_short_half * (p0_top - px_top_ext)).sum(axis=1)
+V_short_top_ext = half + pnl_short_top_ext
+
+# SL value path trimmed
+V_sl = (V_long_bot_ext + V_short_top_ext).loc[TEST_START:]
 
 fig_ls = go.Figure()
 fig_ls.add_trace(go.Scatter(x=V_ls.index, y=V_ls.values, name="Long Top / Short Bottom",

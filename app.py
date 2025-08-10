@@ -330,22 +330,23 @@ fig1.update_layout(
 fig1.update_yaxes(tickprefix="$", separatethousands=True)
 st.plotly_chart(fig1, use_container_width=True)
 
-# -------------------- VALUES TABLE + CSV (for Excel cross-checks) --------------------
-values_df = pd.DataFrame({
-    "V_top": V_top,
-    "V_bot": V_bot,
-    "V_spy": V_spy,
-    "V_ls": V_ls,
-    "V_sl": V_sl
-}).dropna(how="all")
-st.subheader("Daily Portfolio Values (Test Window)")
-st.dataframe(values_df.style.format("{:.2f}"))
-st.download_button(
-    "⬇️ Download Portfolio Values CSV",
-    data=values_df.to_csv(index=True).encode("utf-8"),
-    file_name="portfolio_values.csv",
-    mime="text/csv"
+# -------------------- LONG–SHORT vs SHORT–LONG CHART --------------------
+fig_ls = go.Figure()
+fig_ls.add_trace(go.Scatter(
+    x=V_ls.index, y=V_ls.values, name="Long Top / Short Bottom (Momentum)",
+    line=dict(width=3, color=COLOR_TOP)
+))
+fig_ls.add_trace(go.Scatter(
+    x=V_sl.index, y=V_sl.values, name="Long Bottom / Short Top (Mean Reversion)",
+    line=dict(width=3, color=COLOR_BOTTOM)
+))
+fig_ls.update_layout(
+    title=f"Long–Short vs Short–Long — Buy & Hold ({group_mode})",
+    xaxis_title="Date", yaxis_title="Portfolio Value ($)",
+    template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG
 )
+fig_ls.update_yaxes(tickprefix="$", separatethousands=True)
+st.plotly_chart(fig_ls, use_container_width=True)
 
 # -------------------- DECILE BAR (anchor-consistent) --------------------
 deciles_full = _make_deciles(ranks)  # 1..10 per ticker

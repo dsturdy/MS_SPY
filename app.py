@@ -257,11 +257,11 @@ sl_w = (1 + sl.fillna(0)).cumprod() * INITIAL_INV
 
 fig_ls = go.Figure()
 fig_ls.add_trace(go.Scatter(x=ls_w.index, y=ls_w.values, mode="lines",
-                            name="Long Top / Short Bottom",
+                            name="Long Top / Short Bottom (Momentum)",
                             line=dict(width=3, color=COLOR_TOP),
                             hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'))
 fig_ls.add_trace(go.Scatter(x=sl_w.index, y=sl_w.values, mode="lines",
-                            name="Long Bottom / Short Top",
+                            name="Long Bottom / Short Top (Mean Reversion)",
                             line=dict(width=3, color=COLOR_BOTTOM),
                             hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'))
 fig_ls.update_layout(

@@ -123,9 +123,38 @@ def _make_deciles(ranks: pd.Series) -> pd.Series:
 
 def _cumcurve(rets: pd.Series) -> pd.Series:
     return (1 + rets.fillna(0)).cumprod()
-    
+
 def preview(df: pd.DataFrame, n: int = 2000) -> pd.DataFrame:
     return df.head(n) if len(df) > n else df
+
+# ---- BUY-AND-HOLD HELPERS (no daily rebalancing) ----
+def buyhold_value(prices: pd.DataFrame, notional: float) -> pd.Series:
+    """
+    Equal-weight buy & hold portfolio value from raw prices (no rebalancing).
+    prices: DataFrame indexed by date, columns=tickers (aligned, non-empty)
+    notional: starting dollars invested in this portfolio
+    """
+    if prices.empty or prices.shape[1] == 0:
+        return pd.Series(dtype=float)
+    p0 = prices.iloc[0]
+    shares = (notional / prices.shape[1]) / p0
+    return (prices @ shares)
+
+def short_value(prices: pd.DataFrame, notional: float) -> pd.Series:
+    """
+    Short-leg equity value if you short equal-weight at t0 and hold.
+    Short proceeds are kept as cash (0% carry).
+    Equity_t = notional + Σ shares * (p0 - p_t)
+    """
+    if prices.empty or prices.shape[1] == 0:
+        return pd.Series(dtype=float)
+    p0 = prices.iloc[0]
+    shares = (notional / prices.shape[1]) / p0  # shares shorted
+    pnl = (shares * (p0 - prices)).sum(axis=1)
+    return notional + pnl
+
+def series_returns_from_value(V: pd.Series) -> pd.Series:
+    return V.pct_change().fillna(0)
 
 # -------------------- SIDEBAR (Run + Audit) --------------------
 with st.sidebar.form("controls"):
@@ -204,44 +233,38 @@ st.title("Momentum vs Reversal — S&P 500 (Point-in-Time) Q4’24–Q1’25")
 st.caption("Data source: per-ticker CSVs in repo. Formation ranking uses selected lookback; "
            "test window is Oct 1, 2024 → Mar 31, 2025.")
 
-# -------------------- CUMULATIVE (Top/Bottom/SPY) --------------------
-twin2 = rets.loc[TEST_START:TEST_END]
-avail = set(twin2.columns)
+# -------------------- BUILD TEST-WINDOW PRICES FOR GROUPS --------------------
+px_test_all = prices_all.loc[twin.index, cols]
+avail = set(px_test_all.columns)
 top_use = [t for t in list(top) if t in avail]
 bot_use = [t for t in list(bot) if t in avail]
 if len(top_use) == 0 or len(bot_use) == 0:
     st.error("Selected groups are empty after the coverage filter.")
     st.stop()
 
-g_top = twin2[top_use].mean(axis=1)
-g_bot = twin2[bot_use].mean(axis=1)
+px_top = px_test_all[top_use]
+px_bot = px_test_all[bot_use]
 
-curves = {}
-curves["Top"]    = (1 + g_top.fillna(0)).cumprod()
-curves["Bottom"] = (1 + g_bot.fillna(0)).cumprod()
+# -------------------- CUMULATIVE (Top/Bottom/SPY) — BUY & HOLD --------------------
+V_top = buyhold_value(px_top, INITIAL_INV)
+V_bot = buyhold_value(px_bot, INITIAL_INV)
 
-dates_index = curves["Top"].index
-spy_raw = load_spy_series(dates_index.min().strftime("%Y-%m-%d"),
-                          dates_index.max().strftime("%Y-%m-%d"))
-spy_aligned = spy_raw.reindex(dates_index).ffill()
-spy_rets = spy_aligned.pct_change().fillna(0)
-curves["SPY"] = (1 + spy_rets).cumprod()
+spy_raw = load_spy_series(px_test_all.index.min().strftime("%Y-%m-%d"),
+                          px_test_all.index.max().strftime("%Y-%m-%d"))
+spy_px = spy_raw.reindex(px_test_all.index).ffill()
+V_spy = (spy_px / spy_px.iloc[0]) * INITIAL_INV
 
-cum_df = pd.DataFrame(curves).dropna()
-cum_df = cum_df * INITIAL_INV   # first point = INITIAL_INV * (1 + r_10/1)
+cum_df = pd.DataFrame({"Top": V_top, "Bottom": V_bot, "SPY": V_spy}).dropna()
 
 fig1 = go.Figure()
 fig1.add_trace(go.Scatter(x=cum_df.index, y=cum_df["Top"],    name="Top",
-                          line=dict(width=3, color=COLOR_TOP),
-                          hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'))
+                          line=dict(width=3, color=COLOR_TOP)))
 fig1.add_trace(go.Scatter(x=cum_df.index, y=cum_df["Bottom"], name="Bottom",
-                          line=dict(width=3, color=COLOR_BOTTOM),
-                          hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'))
+                          line=dict(width=3, color=COLOR_BOTTOM)))
 fig1.add_trace(go.Scatter(x=cum_df.index, y=cum_df["SPY"],    name="SPY",
-                          line=dict(width=2, color=COLOR_SPY, dash="dot"),
-                          hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'))
+                          line=dict(width=2, color=COLOR_SPY, dash="dot")))
 fig1.update_layout(
-    title=(f"Cumulative Portfolio Value — {group_mode}  "
+    title=(f"Cumulative Portfolio Value — Buy & Hold  {group_mode}  "
            f"(Formation {formation_start.date()}→{formation_end.date()})"),
     xaxis_title="Date", yaxis_title="Portfolio Value ($)",
     template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG
@@ -249,61 +272,50 @@ fig1.update_layout(
 fig1.update_yaxes(tickprefix="$", separatethousands=True)
 st.plotly_chart(fig1, use_container_width=True)
 
-# -------------------- LONG–SHORT & SHORT–LONG --------------------
-ls = g_top - g_bot
-sl = g_bot - g_top
-ls_w = (1 + ls.fillna(0)).cumprod() * INITIAL_INV
-sl_w = (1 + sl.fillna(0)).cumprod() * INITIAL_INV
+# -------------------- LONG–SHORT & SHORT–LONG — BUY & HOLD --------------------
+half = INITIAL_INV / 2.0
+V_long_top   = buyhold_value(px_top, half)
+V_short_bot  = short_value(px_bot, half)
+V_ls         = (V_long_top + V_short_bot)
+
+V_long_bot   = buyhold_value(px_bot, half)
+V_short_top  = short_value(px_top, half)
+V_sl         = (V_long_bot + V_short_top)
 
 fig_ls = go.Figure()
-fig_ls.add_trace(go.Scatter(x=ls_w.index, y=ls_w.values, mode="lines",
-                            name="Long Top / Short Bottom (Momentum)",
-                            line=dict(width=3, color=COLOR_TOP),
-                            hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'))
-fig_ls.add_trace(go.Scatter(x=sl_w.index, y=sl_w.values, mode="lines",
-                            name="Long Bottom / Short Top (Mean Reversion)",
-                            line=dict(width=3, color=COLOR_BOTTOM),
-                            hovertemplate='Date=%{x|%b %d, %Y}<br>Value ($)=%{y:$,.2f}<extra></extra>'))
+fig_ls.add_trace(go.Scatter(x=V_ls.index, y=V_ls.values, name="Long Top / Short Bottom",
+                            line=dict(width=3, color=COLOR_TOP)))
+fig_ls.add_trace(go.Scatter(x=V_sl.index, y=V_sl.values, name="Long Bottom / Short Top",
+                            line=dict(width=3, color=COLOR_BOTTOM)))
 fig_ls.update_layout(
-    title=f"Long–Short vs Short–Long ({group_mode})",
-    xaxis_title="Date", yaxis_title="Value ($)",
+    title=f"Long–Short vs Short–Long — Buy & Hold ({group_mode})",
+    xaxis_title="Date", yaxis_title="Portfolio Value ($)",
     template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG
 )
 fig_ls.update_yaxes(tickprefix="$", separatethousands=True)
 st.plotly_chart(fig_ls, use_container_width=True)
 
-# -------------------- DECILE BAR (compounded per-decile portfolios, like cum curve) --------------------
-# For each decile d, build a DAILY equal-weight portfolio of its members over the test window,
-# then compound across days: (1 + g_d).prod() - 1
-
+# -------------------- DECILE BAR (compounded from buy&hold value paths) --------------------
 deciles_full = _make_deciles(ranks)  # 1..10 per ticker
 
 decile_rows = []
-decile_cum_paths = {}  # keep full wealth paths for audit/zip
+decile_cum_paths = {}
 
 for d, members_idx in deciles_full.groupby(deciles_full).groups.items():
-    members = [t for t in members_idx if t in twin.columns]
+    members = [t for t in members_idx if t in px_test_all.columns]
     if not members:
         continue
-
-    # daily equal-weight return for this decile over the TEST window
-    g_d = twin[members].mean(axis=1)
-
-    # compounded total return over the test window (same as cum curve logic)
-    total_ret = (1.0 + g_d.fillna(0)).prod() - 1.0
-
-    # also keep the full cumulative path in case you want to compare curves by decile
-    cum_path = (1.0 + g_d.fillna(0)).cumprod()
-    decile_cum_paths[int(d)] = cum_path.rename(f"decile_{int(d)}_cum")
-
+    V_dec = buyhold_value(px_test_all[members], INITIAL_INV)
+    total_ret = V_dec.iloc[-1] / V_dec.iloc[0] - 1.0
     decile_rows.append({"decile": int(d), "test_total_return": float(total_ret)})
+    decile_cum_paths[int(d)] = (V_dec / V_dec.iloc[0]).rename(f"decile_{int(d)}_wealth")
 
 avg_future = pd.DataFrame(decile_rows).sort_values("decile")
 
 fig2 = px.bar(
     avg_future, x="decile", y="test_total_return",
-    title="Compounded Test Return by Formation Decile",
-    labels={"test_total_return": "Total Return (Compounded)"},
+    title="Compounded Test Return by Formation Decile (Buy & Hold)",
+    labels={"test_total_return": "Total Return"},
     template="plotly_white"
 )
 fig2.update_yaxes(tickformat=".2%")
@@ -374,7 +386,7 @@ else:
             customdata=np.stack([d["Ticker"].values], axis=-1),
             hovertemplate=("Ticker: %{customdata[0]}<br>"
                            "Formation (In-Sample) Return: %{x:.2%}<br>"
-                           "Test (Out-of-Sample) Return: %{y:.2%}<extra></extra>")
+                           "Test (Out-Of-Sample) Return: %{y:.2%}<extra></extra>")
         ))
     fig3.update_layout(
         title=f"Cross-Section (Selected Groups Only): {top_name} vs {bot_name}",
@@ -385,30 +397,33 @@ else:
     fig3.update_yaxes(tickformat=".2%")
     st.plotly_chart(fig3, use_container_width=True)
 
-# -------------------- SUMMARY TABLE --------------------
-def _stats(s):
-    ann_vol, sharpe, mdd = port_stats(s.dropna())
-    return compute_cum(s), ann_vol, sharpe, mdd
+# -------------------- SUMMARY TABLE — BUY & HOLD --------------------
+ret_top = series_returns_from_value(V_top)
+ret_bot = series_returns_from_value(V_bot)
+ret_ls  = series_returns_from_value(V_ls)
+ret_sl  = series_returns_from_value(V_sl)
 
-ls = g_top - g_bot
-sl = g_bot - g_top
-cum_top, av_top, sh_top, dd_top   = _stats(g_top)
-cum_bot, av_bot, sh_bot, dd_bot   = _stats(g_bot)
-cum_ls,  av_ls,  sh_ls,  dd_ls    = _stats(ls)
-cum_sl,  av_sl,  sh_sl,  dd_sl    = _stats(sl)
+def _stats_from_rets(s):
+    ann_vol, sharpe, mdd = port_stats(s.dropna())
+    cum = (1 + s).prod() - 1
+    return cum, ann_vol, sharpe, mdd
+
+cum_top, av_top, sh_top, dd_top = _stats_from_rets(ret_top)
+cum_bot, av_bot, sh_bot, dd_bot = _stats_from_rets(ret_bot)
+cum_ls,  av_ls,  sh_ls,  dd_ls  = _stats_from_rets(ret_ls)
+cum_sl,  av_sl,  sh_sl,  dd_sl  = _stats_from_rets(ret_sl)
 
 summary = pd.DataFrame([
-    ["Top",         cum_top, av_top, sh_top, dd_top],
-    ["Bottom",      cum_bot, av_bot, sh_bot, dd_bot],
-    ["Long–Short",  cum_ls,  av_ls,  sh_ls,  dd_ls ],
-    ["Short–Long",  cum_sl,  av_sl,  sh_sl,  dd_sl]
+    ["Top (Buy&Hold)",         cum_top, av_top, sh_top, dd_top],
+    ["Bottom (Buy&Hold)",      cum_bot, av_bot, sh_bot, dd_bot],
+    ["Long–Short (Buy&Hold)",  cum_ls,  av_ls,  sh_ls,  dd_ls ],
+    ["Short–Long (Buy&Hold)",  cum_sl,  av_sl,  sh_sl,  dd_sl]
 ], columns=["Portfolio", "Cumulative Return", "Annualized Vol", "Sharpe", "Max Drawdown"]).set_index("Portfolio")
 
-st.subheader("Summary (Test Window)")
+st.subheader("Summary (Test Window) — Buy & Hold")
 st.dataframe(summary.style.format({
     "Cumulative Return":"{:.2%}", "Annualized Vol":"{:.2%}", "Sharpe":"{:.2f}", "Max Drawdown":"{:.2%}"
 }))
-st.caption("β>0 & significant (p<0.05) → momentum; β<0 & significant → reversal; else → inconclusive.")
 
 # -------------------- AUDIT MODE (dates/prices + group splits + ZIP) --------------------
 if audit_on:
@@ -437,27 +452,14 @@ if audit_on:
         ]
     })
 
-    price_wide = prices_all[cols]
-    boundary_prices = []
-    for anchor, ts in zip(
-        ["formation_start","formation_end","test_start","test_end"],
-        [used_formation_start, used_formation_end, used_test_start, used_test_end]
-    ):
-        if pd.isna(ts):
-            continue
-        row = price_wide.loc[ts].copy()
-        row.name = anchor
-        boundary_prices.append(row)
-
-    if boundary_prices:
-        boundary_prices = pd.DataFrame(boundary_prices)
-    else:
-        boundary_prices = pd.DataFrame(columns=cols)
+    anchors = ["formation_start","formation_end","test_start","test_end"]
+    anchor_dates = [used_formation_start, used_formation_end, used_test_start, used_test_end]
+    boundary_prices = prices_all[cols].reindex(anchor_dates)
+    boundary_prices.index = anchors
 
     boundary_prices_long = (
-        boundary_prices.reset_index()
-        .melt(id_vars="index", var_name="ticker", value_name="price")
-        .rename(columns={"index":"anchor"})
+        boundary_prices.reset_index(names="anchor")
+                       .melt(id_vars="anchor", var_name="ticker", value_name="price")
     )
 
     with st.expander(f"window_boundaries  —  shape {window_boundaries.shape}"):
@@ -472,7 +474,6 @@ if audit_on:
     audit["boundary_prices_long"] = boundary_prices_long
 
     # ---- Group membership + per-group prices/returns (formation & test) ----
-    deciles_full = _make_deciles(ranks)
     group_label = pd.Series("Neither", index=cols, dtype=object)
     group_label.loc[top_use] = "Top"
     group_label.loc[bot_use] = "Bottom"
@@ -480,7 +481,7 @@ if audit_on:
     group_membership = pd.DataFrame({
         "ticker": cols,
         "rank_pct": ranks.reindex(cols).values,
-        "decile": deciles_full.reindex(cols).values,
+        "decile": _make_deciles(ranks).reindex(cols).values,
         "formation_cumret": formation.reindex(cols).values,
         "test_cumret": test.reindex(cols).values,
         "group": group_label.values
@@ -500,7 +501,7 @@ if audit_on:
     bot_returns_formation = ret_formation_all[bot_use]
     top_returns_test      = ret_test_all[top_use]
     bot_returns_test      = ret_test_all[bot_use]
-    
+
     with st.expander(f"group_membership  —  shape {group_membership.shape}"):
         st.dataframe(preview(group_membership, n=2000))
     with st.expander(f"top_prices_formation  —  shape {top_prices_formation.shape}"):
@@ -512,9 +513,26 @@ if audit_on:
     with st.expander(f"bottom_prices_test  —  shape {bot_prices_test.shape}"):
         st.dataframe(preview(bot_prices_test))
 
+    # ---- Audit: buy & hold paths and initial shares ----
+    p0_top = px_top.iloc[0] if not px_top.empty else pd.Series(dtype=float)
+    p0_bot = px_bot.iloc[0] if not px_bot.empty else pd.Series(dtype=float)
+    shares_top_long = ((INITIAL_INV) / max(1, len(p0_top))) / p0_top if not p0_top.empty else pd.Series(dtype=float)
+    shares_bot_long = ((INITIAL_INV) / max(1, len(p0_bot))) / p0_bot if not p0_bot.empty else pd.Series(dtype=float)
+
+    short_half = INITIAL_INV / 2.0
+    shares_bot_short = (short_half / max(1, len(p0_bot))) / p0_bot if not p0_bot.empty else pd.Series(dtype=float)
+    shares_top_short = (short_half / max(1, len(p0_top))) / p0_top if not p0_top.empty else pd.Series(dtype=float)
+
     audit["group_membership"]          = group_membership
-    audit["top_cum_path"] = _cumcurve(g_top).rename("Top_Cumulative").to_frame()
-    audit["bottom_cum_path"] = _cumcurve(g_bot).rename("Bottom_Cumulative").to_frame()
+    audit["buyhold_top_value"]         = V_top.to_frame(name="V_top")
+    audit["buyhold_bottom_value"]      = V_bot.to_frame(name="V_bottom")
+    audit["longshort_value"]           = V_ls.to_frame(name="V_LS")
+    audit["shortlong_value"]           = V_sl.to_frame(name="V_SL")
+    audit["buyhold_top_initial_shares"] = shares_top_long.rename("shares_long_per_ticker").to_frame()
+    audit["buyhold_bottom_initial_shares"] = shares_bot_long.rename("shares_long_per_ticker").to_frame()
+    audit["short_bot_initial_shares"]  = shares_bot_short.rename("shares_short_per_ticker").to_frame()
+    audit["short_top_initial_shares"]  = shares_top_short.rename("shares_short_per_ticker").to_frame()
+
     audit["top_prices_formation"]      = top_prices_formation
     audit["bottom_prices_formation"]   = bot_prices_formation
     audit["top_prices_test"]           = top_prices_test
@@ -523,12 +541,6 @@ if audit_on:
     audit["bottom_returns_formation"]  = bot_returns_formation
     audit["top_returns_test"]          = top_returns_test
     audit["bottom_returns_test"]       = bot_returns_test
-
-    # (Optional previews of other intermediates — comment out if too chatty)
-    # audit["prices_all (loaded)"] = prices_all
-    # audit["rets_all (pct_change)"] = rets_all
-    # audit["fwin (formation rets)"] = fwin
-    # audit["twin (test rets)"] = twin
 
     # Include final summary + (optional) OLS summary
     audit["summary_metrics"] = summary
@@ -545,6 +557,10 @@ if audit_on:
                 if isinstance(df, pd.DataFrame):
                     fname = name.replace(" ", "_").replace("/", "-") + ".csv"
                     zf.writestr(fname, df.to_csv(index=True))
+            # Also stash the per-decile cum wealth paths
+            if decile_cum_paths:
+                decile_df = pd.DataFrame(decile_cum_paths).sort_index()
+                zf.writestr("decile_wealth_paths.csv", decile_df.to_csv(index=True))
             if ols_text is not None:
                 zf.writestr("ols_summary.txt", ols_text)
         st.download_button(

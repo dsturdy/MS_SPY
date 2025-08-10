@@ -269,35 +269,73 @@ V_sl     = V_sl_ext.loc[TEST_START:]
 cum_df = pd.DataFrame({"Top": V_top, "Bottom": V_bot, "SPY": V_spy}).dropna(how="all")
 
 fig1 = go.Figure()
-fig1.add_trace(go.Scatter(x=cum_df.index, y=cum_df["Top"],    name="Top",    line=dict(width=3, color=COLOR_TOP)))
-fig1.add_trace(go.Scatter(x=cum_df.index, y=cum_df["Bottom"], name="Bottom", line=dict(width=3, color=COLOR_BOT)))
-fig1.add_trace(go.Scatter(x=cum_df.index, y=cum_df["SPY"],    name="SPY",    line=dict(width=2, color=COLOR_SPY, dash="dot")))
+
+ht = '%{x|%Y-%m-%d}<br>%{name}: $%{y:,.2f}<extra></extra>'
+
+fig1.add_trace(go.Scatter(
+    x=cum_df.index, y=cum_df["Top"],
+    name="Top",
+    hovertemplate=ht,
+    line=dict(width=3, color=COLOR_TOP)
+))
+fig1.add_trace(go.Scatter(
+    x=cum_df.index, y=cum_df["Bottom"],
+    name="Bottom",
+    hovertemplate=ht,
+    line=dict(width=3, color=COLOR_BOT)
+))
+fig1.add_trace(go.Scatter(
+    x=cum_df.index, y=cum_df["SPY"],
+    name="SPY",
+    hovertemplate=ht,
+    line=dict(width=2, color=COLOR_SPY, dash="dot")
+))
+
 fig1.update_layout(
     title=f"Cumulative Portfolio Value — Buy & Hold ({group_mode})  "
           f"(Formation {formation_start.date()} → {formation_end.date()})",
-    xaxis_title="Date", yaxis_title="Portfolio Value ($)",
-    template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG
+    xaxis_title="Date",
+    yaxis_title="Portfolio Value ($)",
+    template="plotly_white",
+    plot_bgcolor=PLOT_BG,
+    paper_bgcolor=PLOT_BG,
+    hovermode="x unified",
+    hoverlabel=dict(namelength=-1)  # don’t abbreviate names
 )
 fig1.update_yaxes(tickprefix="$", separatethousands=True)
-fig1.update_traces(
-    hovertemplate='%{x|%Y-%m-%d}<br>%{name}: $%{y:,.2f}<extra></extra>'
-)
+
 st.plotly_chart(fig1, use_container_width=True)
 
 # LS vs SL
 fig_ls = go.Figure()
-fig_ls.add_trace(go.Scatter(x=V_ls.index, y=V_ls.values, name="Long Top / Short Bottom", line=dict(width=3, color=COLOR_TOP)))
-fig_ls.add_trace(go.Scatter(x=V_sl.index, y=V_sl.values, name="Long Bottom / Short Top", line=dict(width=3, color=COLOR_BOT)))
+
+ht_ls = '%{x|%Y-%m-%d}<br>%{name}: $%{y:,.2f}<extra></extra>'
+
+fig_ls.add_trace(go.Scatter(
+    x=V_ls.index, y=V_ls.values,
+    name="Long Top / Short Bottom",
+    hovertemplate=ht_ls,
+    line=dict(width=3, color=COLOR_TOP)
+))
+fig_ls.add_trace(go.Scatter(
+    x=V_sl.index, y=V_sl.values,
+    name="Long Bottom / Short Top",
+    hovertemplate=ht_ls,
+    line=dict(width=3, color=COLOR_BOT)
+))
+
 fig_ls.update_layout(
     title=f"Long–Short vs Short–Long — Buy & Hold ({group_mode})",
-    xaxis_title="Date", yaxis_title="Portfolio Value ($)",
-    template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG
+    xaxis_title="Date",
+    yaxis_title="Portfolio Value ($)",
+    template="plotly_white",
+    plot_bgcolor=PLOT_BG,
+    paper_bgcolor=PLOT_BG,
+    hovermode="x unified",
+    hoverlabel=dict(namelength=-1)
 )
 fig_ls.update_yaxes(tickprefix="$", separatethousands=True)
 
-fig_ls.update_traces(
-    hovertemplate='%{x|%Y-%m-%d}<br>%{name}: $%{y:,.2f}<extra></extra>'
-)
 st.plotly_chart(fig_ls, use_container_width=True)
 
 # ==================== DECILE BAR (ANCHOR-CONSISTENT) ====================

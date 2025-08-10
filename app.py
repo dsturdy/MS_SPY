@@ -220,8 +220,8 @@ twin = rets.loc[TEST_START:TEST_END]
 if rets.shape[1] < 50:
     st.warning(f"Only {rets.shape[1]} tickers have complete data in both windows. Results may be noisy.")
 
-formation = fwin.apply(compute_cum)
-test      = twin.apply(compute_cum)
+formation = formation_bh
+test      = test_bh
 
 top, bot, ranks = partition_groups(formation, group_mode)
 if len(top) == 0 or len(bot) == 0:

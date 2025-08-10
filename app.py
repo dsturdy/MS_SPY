@@ -1,5 +1,7 @@
 # app.py (Option 2 – light, professional theme)
 import os
+import io
+import zipfile
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
@@ -124,7 +126,17 @@ def port_stats(series):
     sharpe  = (series.mean() / std) * np.sqrt(252)
     return ann_vol, sharpe, max_drawdown(series)
 
-# -------------------- SIDEBAR (Run button) --------------------
+def _make_deciles(ranks: pd.Series) -> pd.Series:
+    return (np.ceil(ranks * 10)).astype(int).clip(upper=10)
+
+def _cumcurve(rets: pd.Series) -> pd.Series:
+    w = (1 + rets.fillna(0)).cumprod()
+    return w / w.iloc[0]
+
+def preview(df: pd.DataFrame, n: int = 2000) -> pd.DataFrame:
+    return df.head(n) if len(df) > n else df
+
+# -------------------- SIDEBAR (Run + Audit) --------------------
 with st.sidebar.form("controls"):
     st.header("Parameters")
     lookback_choice = st.selectbox(
@@ -142,10 +154,12 @@ with st.sidebar.form("controls"):
          "Half (Top 50% vs Bottom 50%)"],
         index=0
     )
+    audit_on = st.checkbox("Audit mode: show intermediate tables", value=False)
+    offer_downloads = st.checkbox("Include ZIP of CSVs", value=True)
     run = st.form_submit_button("Run")
 
 if not run:
-    st.title("Momentum vs Reversal — S&P 500 (Point‑in‑Time) Q4’24–Q1’25")
+    st.title("Momentum vs Reversal — S&P 500 (Point-in-Time) Q4’24–Q1’25")
     st.info("Select your lookback & grouping in the sidebar, then click **Run**.")
     st.stop()
 
@@ -195,8 +209,8 @@ if len(top) == 0 or len(bot) == 0:
     st.stop()
 
 # -------------------- TITLE --------------------
-st.title("Momentum vs Reversal — S&P 500 (Point‑in‑Time) Q4’24–Q1’25")
-st.caption("Data source: per‑ticker CSVs in repo. Formation ranking uses selected lookback; "
+st.title("Momentum vs Reversal — S&P 500 (Point-in-Time) Q4’24–Q1’25")
+st.caption("Data source: per-ticker CSVs in repo. Formation ranking uses selected lookback; "
            "test window is Oct 1, 2024 → Mar 31, 2025.")
 
 # -------------------- CUMULATIVE (Top/Bottom/SPY) --------------------
@@ -268,7 +282,7 @@ fig_ls.update_yaxes(tickprefix="$", separatethousands=True)
 st.plotly_chart(fig_ls, use_container_width=True)
 
 # -------------------- DECILE BAR --------------------
-deciles = (np.ceil(ranks * 10)).astype(int).clip(upper=10)
+deciles = _make_deciles(ranks)
 decile_df = pd.DataFrame({"formation": formation, "test": test, "decile": deciles})
 avg_future = decile_df.groupby("decile", as_index=False)["test"].mean()
 
@@ -306,6 +320,7 @@ df_sel = pd.DataFrame({
     "group": group_flag.values
 }).dropna()
 
+reg = None
 if df_sel.empty or df_sel["formation"].nunique() < 2:
     st.warning("Not enough variation in the selected groups to plot regression.")
 else:
@@ -343,12 +358,12 @@ else:
             customdata=np.stack([d["Ticker"].values], axis=-1),
             hovertemplate=(
                 "Ticker: %{customdata[0]}<br>"
-                "Formation (In‑Sample) Return: %{x:.2%}<br>"
-                "Test (Out‑of‑Sample) Return: %{y:.2%}<extra></extra>"
+                "Formation (In-Sample) Return: %{x:.2%}<br>"
+                "Test (Out-of-Sample) Return: %{y:.2%}<extra></extra>"
             )
         ))
     fig3.update_layout(
-        title=f"Cross‑Section (Selected Groups Only): {top_name} vs {bot_name}",
+        title=f"Cross-Section (Selected Groups Only): {top_name} vs {bot_name}",
         xaxis_title="Formation Return", yaxis_title="Test Return",
         template="plotly_white", plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_BG
     )
@@ -380,3 +395,79 @@ st.dataframe(summary.style.format({
     "Cumulative Return":"{:.2%}", "Annualized Vol":"{:.2%}", "Sharpe":"{:.2f}", "Max Drawdown":"{:.2%}"
 }))
 st.caption("β>0 & significant (p<0.05) → momentum; β<0 & significant → reversal; else → inconclusive.")
+
+# -------------------- AUDIT MODE (all intermediates + ZIP) --------------------
+if audit_on:
+    audit = {}
+
+    # 1) Sources & shapes
+    audit["prices_all (loaded)"] = prices_all
+    audit["rets_all (pct_change)"] = rets_all
+    audit["fwin (formation rets)"] = fwin
+    audit["twin (test rets)"] = twin
+
+    # 2) Universe filters
+    keep_mask = fwin_all.notna().all() & twin_all.notna().all()
+    audit["keep_mask (complete both windows)"] = keep_mask.to_frame("keep")
+    audit["kept_cols (index)"] = pd.DataFrame({"ticker": cols})
+
+    # 3) Formation stats & ranks
+    audit["formation_cumret"] = formation.sort_values(ascending=False).to_frame("formation_cumret")
+    audit["ranks_0to1"] = ranks.to_frame("rank_pct")
+    audit["deciles_1to10"] = _make_deciles(ranks).to_frame("decile")
+
+    # 4) Test stats
+    audit["test_cumret"] = test.sort_values(ascending=False).to_frame("test_cumret")
+
+    # 5) Group membership
+    top_flag = pd.Series(False, index=cols); top_flag.loc[list(top)] = True
+    bot_flag = pd.Series(False, index=cols); bot_flag.loc[list(bot)] = True
+    audit["group_flags"] = pd.DataFrame({"top_grp": top_flag, "bot_grp": bot_flag})
+
+    # 6) In-test daily portfolio series
+    audit["g_top_daily_rets"] = g_top.to_frame("g_top")
+    audit["g_bot_daily_rets"] = g_bot.to_frame("g_bot")
+    audit["ls_daily_rets"] = (g_top - g_bot).to_frame("long_short")
+    audit["sl_daily_rets"] = (g_bot - g_top).to_frame("short_long")
+
+    audit["g_top_cum_curve"] = _cumcurve(g_top).to_frame("g_top_curve")
+    audit["g_bot_cum_curve"] = _cumcurve(g_bot).to_frame("g_bot_curve")
+    audit["ls_cum_curve"]    = _cumcurve(g_top - g_bot).to_frame("ls_curve")
+    audit["sl_cum_curve"]    = _cumcurve(g_bot - g_top).to_frame("sl_curve")
+
+    # 7) SPY aligned + returns used
+    audit["spy_aligned_px"] = spy_aligned.to_frame("SPY_px")
+    audit["spy_daily_rets"] = spy_rets.to_frame("SPY_ret")
+
+    # 8) Regression inputs/outputs (selected groups only)
+    audit["regression_inputs"] = pd.DataFrame({
+        "formation": df_sel.set_index("Ticker")["formation"] if not df_sel.empty else pd.Series(dtype=float),
+        "test": df_sel.set_index("Ticker")["test"] if not df_sel.empty else pd.Series(dtype=float),
+        "group": df_sel.set_index("Ticker")["group"] if not df_sel.empty else pd.Series(dtype=object),
+    })
+
+    st.subheader("Audit Tables")
+    for name, df in audit.items():
+        with st.expander(f"{name}  —  shape {getattr(df, 'shape', None)}"):
+            st.dataframe(preview(df if isinstance(df, pd.DataFrame) else pd.DataFrame(df)))
+
+    if reg is not None:
+        st.subheader("OLS Summary (text)")
+        st.code(reg.summary().as_text())
+
+    if offer_downloads:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, df in audit.items():
+                fname = name.replace(" ", "_").replace("/", "-") + ".csv"
+                tmp = df if isinstance(df, pd.DataFrame) else pd.DataFrame(df)
+                zf.writestr(fname, tmp.to_csv(index=True))
+            zf.writestr("summary_metrics.csv", summary.to_csv(index=True))
+            if reg is not None:
+                zf.writestr("ols_summary.txt", reg.summary().as_text())
+        st.download_button(
+            "⬇️ Download all audit CSVs (ZIP)",
+            data=buf.getvalue(),
+            file_name="audit_exports.zip",
+            mime="application/zip"
+        )
